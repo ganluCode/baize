@@ -3,8 +3,10 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import HTTPException
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from baize.session.models import ChatMessageModel, MessageRole, SessionModel
 from baize.session.repository import ChatMessageRepository, SessionRepository
@@ -246,3 +248,56 @@ class SessionService:
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found.")
         return session
+
+    _MAX_TITLE_GEN_ATTEMPTS = 3
+    _MAX_TITLE_LEN = 30
+
+    async def try_generate_title(
+        self,
+        session_id: uuid.UUID,
+        user_message: str,
+        llm_client: Any,
+    ) -> None:
+        """Attempt to generate a title for a session using the LLM.
+
+        Called after the first user message in a new session. Silently skips
+        on failure. Stops trying after 3 cumulative failures.
+
+        Args:
+            session_id: The session to generate a title for.
+            user_message: The user's first message, used as generation context.
+            llm_client: A LangChain chat model instance (ChatOpenAI or ChatAnthropic).
+        """
+        session = await self._session_repo.get_by_id(session_id)
+        if session is None:
+            return
+        if session.title is not None:
+            return
+        if session.title_gen_attempts >= self._MAX_TITLE_GEN_ATTEMPTS:
+            return
+
+        try:
+            messages = [
+                SystemMessage(
+                    content=(
+                        "Generate a concise session title (at most 30 characters) "
+                        "based on the user's message. Reply with only the title, no punctuation or quotes."
+                    )
+                ),
+                HumanMessage(content=user_message),
+            ]
+            response = await llm_client.ainvoke(messages)
+            raw_title = response.content.strip()
+            title = raw_title[: self._MAX_TITLE_LEN]
+            await self._session_repo.update(session_id, title=title)
+            logger.debug("Generated title '%s' for session %s.", title, session_id)
+        except Exception:
+            new_attempts = session.title_gen_attempts + 1
+            await self._session_repo.update(session_id, title_gen_attempts=new_attempts)
+            logger.warning(
+                "Title generation failed for session %s (attempt %d/%d).",
+                session_id,
+                new_attempts,
+                self._MAX_TITLE_GEN_ATTEMPTS,
+                exc_info=True,
+            )

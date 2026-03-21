@@ -36,6 +36,7 @@ class SessionModel(Base):
         nullable=False,
     )
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    title_gen_attempts: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
     auto_memory_recall: Mapped[bool | None] = mapped_column(nullable=True)
     shared_memory: Mapped[bool | None] = mapped_column(nullable=True)
     status: Mapped[SessionStatus] = mapped_column(

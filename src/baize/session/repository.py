@@ -87,7 +87,7 @@ class SessionRepository:
         if obj is None:
             return None
 
-        allowed = {"status", "title", "updated_at"}
+        allowed = {"status", "title", "updated_at", "title_gen_attempts"}
         for key, value in kwargs.items():
             if key in allowed:
                 setattr(obj, key, value)

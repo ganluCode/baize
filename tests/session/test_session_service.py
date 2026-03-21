@@ -16,12 +16,15 @@ def _make_session(
     session_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
     agent_id: uuid.UUID | None = None,
+    title: str | None = None,
+    title_gen_attempts: int = 0,
 ) -> SessionModel:
     s = SessionModel()
     s.id = session_id or uuid.uuid4()
     s.user_id = user_id or uuid.uuid4()
     s.agent_id = agent_id or uuid.uuid4()
-    s.title = None
+    s.title = title
+    s.title_gen_attempts = title_gen_attempts
     s.status = SessionStatus.active
     s.auto_memory_recall = None
     s.shared_memory = None
@@ -220,3 +223,142 @@ async def test_get_or_create_session_raises_404_when_not_found(
         )
 
     assert exc_info.value.status_code == 404
+
+
+# --- try_generate_title ---
+
+
+@pytest.mark.asyncio
+async def test_try_generate_title_success_writes_title(
+    service: SessionService,
+    session_repo: AsyncMock,
+) -> None:
+    """try_generate_title calls LLM and writes title to DB on success."""
+    session_id = uuid.uuid4()
+    session_repo.get_by_id.return_value = _make_session(session_id=session_id, title=None, title_gen_attempts=0)
+    session_repo.update.return_value = MagicMock()
+
+    llm_client = AsyncMock()
+    llm_client.ainvoke.return_value = MagicMock(content="My Session Title")
+
+    await service.try_generate_title(
+        session_id=session_id,
+        user_message="Tell me about Python",
+        llm_client=llm_client,
+    )
+
+    llm_client.ainvoke.assert_called_once()
+    session_repo.update.assert_called_once_with(session_id, title="My Session Title")
+
+
+@pytest.mark.asyncio
+async def test_try_generate_title_skips_when_title_already_set(
+    service: SessionService,
+    session_repo: AsyncMock,
+) -> None:
+    """try_generate_title does nothing when session already has a title."""
+    session_id = uuid.uuid4()
+    session_repo.get_by_id.return_value = _make_session(session_id=session_id, title="Existing Title")
+
+    llm_client = AsyncMock()
+
+    await service.try_generate_title(
+        session_id=session_id,
+        user_message="Hello",
+        llm_client=llm_client,
+    )
+
+    llm_client.ainvoke.assert_not_called()
+    session_repo.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_try_generate_title_skips_when_max_attempts_reached(
+    service: SessionService,
+    session_repo: AsyncMock,
+) -> None:
+    """try_generate_title does not call LLM after 3 failures."""
+    session_id = uuid.uuid4()
+    session_repo.get_by_id.return_value = _make_session(
+        session_id=session_id, title=None, title_gen_attempts=3
+    )
+
+    llm_client = AsyncMock()
+
+    await service.try_generate_title(
+        session_id=session_id,
+        user_message="Hello",
+        llm_client=llm_client,
+    )
+
+    llm_client.ainvoke.assert_not_called()
+    session_repo.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_try_generate_title_catches_llm_exception(
+    service: SessionService,
+    session_repo: AsyncMock,
+) -> None:
+    """try_generate_title silently catches LLM exceptions and increments attempt count."""
+    session_id = uuid.uuid4()
+    session_repo.get_by_id.return_value = _make_session(session_id=session_id, title=None, title_gen_attempts=0)
+    session_repo.update.return_value = MagicMock()
+
+    llm_client = AsyncMock()
+    llm_client.ainvoke.side_effect = RuntimeError("LLM unavailable")
+
+    # Should not raise
+    await service.try_generate_title(
+        session_id=session_id,
+        user_message="Hello",
+        llm_client=llm_client,
+    )
+
+    # Attempt count incremented, but no title written
+    session_repo.update.assert_called_once_with(session_id, title_gen_attempts=1)
+
+
+@pytest.mark.asyncio
+async def test_try_generate_title_skips_when_session_not_found(
+    service: SessionService,
+    session_repo: AsyncMock,
+) -> None:
+    """try_generate_title does nothing if the session no longer exists."""
+    session_repo.get_by_id.return_value = None
+
+    llm_client = AsyncMock()
+
+    await service.try_generate_title(
+        session_id=uuid.uuid4(),
+        user_message="Hello",
+        llm_client=llm_client,
+    )
+
+    llm_client.ainvoke.assert_not_called()
+    session_repo.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_try_generate_title_truncates_long_title(
+    service: SessionService,
+    session_repo: AsyncMock,
+) -> None:
+    """try_generate_title truncates LLM response to 30 characters."""
+    session_id = uuid.uuid4()
+    session_repo.get_by_id.return_value = _make_session(session_id=session_id, title=None, title_gen_attempts=0)
+    session_repo.update.return_value = MagicMock()
+
+    long_title = "A" * 50  # 50 chars, should be cut to 30
+    llm_client = AsyncMock()
+    llm_client.ainvoke.return_value = MagicMock(content=long_title)
+
+    await service.try_generate_title(
+        session_id=session_id,
+        user_message="Hello",
+        llm_client=llm_client,
+    )
+
+    call_kwargs = session_repo.update.call_args
+    written_title = call_kwargs[1]["title"] if call_kwargs[1] else call_kwargs[0][1]
+    assert len(written_title) <= 30
