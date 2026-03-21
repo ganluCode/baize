@@ -12,6 +12,7 @@ from baize.core.container import Container
 from baize.core.deps import set_container
 from baize.user.auth_router import router as auth_router
 from baize.user.router import router as user_router
+from baize.user.seed import seed_admin_user
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings()
     container = Container(settings)
     set_container(container)
+    await seed_admin_user()
     yield
     logger.info("Baize API shutting down...")
     await container.close()
