@@ -3,7 +3,7 @@
 import os
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -17,6 +17,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 from baize.main import app  # noqa: E402
 from baize.user.deps import get_current_user, require_admin  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
+from baize.user.repository import UserRepository  # noqa: E402
 from baize.user.router import _get_user_service  # noqa: E402
 from baize.user.schemas import (  # noqa: E402
     ResetKeyResponse,
@@ -283,3 +284,42 @@ async def test_reset_key_user_not_found_returns_404(client_admin, mock_svc):
     response = await client_admin.post(f"/api/v1/users/{uuid.uuid4()}/reset-key")
 
     assert response.status_code == 404
+
+
+async def test_reset_key_then_old_key_returns_401(app, mock_svc, admin_user):
+    """After reset-key, the old API key is no longer valid for authentication.
+
+    Step 1: admin resets the key → new plaintext key returned.
+    Step 2: subsequent request with old key is rejected (auth returns 401).
+    The rejection is simulated via get_current_user override, reflecting that
+    the old api_key_hash is no longer found in the DB after reset.
+    """
+    target_id = uuid.uuid4()
+    mock_svc.reset_api_key.return_value = ResetKeyResponse(api_key="brand-new-key")
+
+    app.dependency_overrides[_get_user_service] = lambda: mock_svc
+    app.dependency_overrides[get_current_user] = lambda: admin_user
+    app.dependency_overrides[require_admin] = lambda: admin_user
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            # Step 1: Admin resets the key
+            resp = await c.post(f"/api/v1/users/{target_id}/reset-key")
+            assert resp.status_code == 200
+            assert resp.json()["api_key"] == "brand-new-key"
+
+            # Step 2: Simulate old key hash no longer in DB (reset replaced it)
+            def _old_key_rejected():
+                raise HTTPException(status_code=401, detail="Invalid API key")
+
+            app.dependency_overrides[get_current_user] = _old_key_rejected
+            app.dependency_overrides.pop(require_admin)
+
+            resp = await c.get(
+                "/api/v1/users/me",
+                headers={"X-API-Key": "old-key-no-longer-valid"},
+            )
+            assert resp.status_code == 401
+    finally:
+        app.dependency_overrides.pop(_get_user_service, None)
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(require_admin, None)

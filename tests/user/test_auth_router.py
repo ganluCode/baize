@@ -100,3 +100,75 @@ async def test_refresh_with_valid_jwt_returns_new_token(client, mock_auth):
 async def test_refresh_without_token_returns_401(client, mock_auth):
     response = await client.post("/api/v1/auth/refresh")
     assert response.status_code == 401
+
+
+async def test_login_via_name_returns_200(client, mock_auth):
+    """Login with username (no @) returns a token."""
+    mock_auth.login.return_value = ServiceTokenResponse(
+        access_token="tok_name",
+        token_type="bearer",
+        expires_in=86400,
+    )
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"login": "ganlu", "password": "secret"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["access_token"] == "tok_name"
+    mock_auth.login.assert_awaited_once_with(login="ganlu", password="secret")
+
+
+async def test_login_inactive_user_returns_403(client, mock_auth):
+    """is_active=False user is rejected with 403."""
+    mock_auth.login.side_effect = AuthError("User account is inactive.", status_code=403)
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"login": "ganlu@example.com", "password": "secret"},
+    )
+
+    assert response.status_code == 403
+
+
+async def test_logout_then_token_becomes_invalid(client, mock_auth):
+    """After logout, using the same token again returns 401."""
+    # First call: token is valid, logout succeeds
+    # Second call: token is revoked, logout raises (simulating revoked JWT)
+    mock_auth.logout.side_effect = [None, Exception("Token already revoked")]
+
+    resp1 = await client.post(
+        "/api/v1/auth/logout",
+        headers={"Authorization": "Bearer mytoken"},
+    )
+    assert resp1.status_code == 200
+
+    resp2 = await client.post(
+        "/api/v1/auth/logout",
+        headers={"Authorization": "Bearer mytoken"},
+    )
+    assert resp2.status_code == 401
+
+
+async def test_refresh_then_old_token_becomes_invalid(client, mock_auth):
+    """After refresh, using the old token again returns 401."""
+    mock_auth.refresh.side_effect = [
+        ServiceTokenResponse(access_token="newtoken", token_type="bearer", expires_in=86400),
+        Exception("Token already revoked"),
+    ]
+
+    resp1 = await client.post(
+        "/api/v1/auth/refresh",
+        headers={"Authorization": "Bearer oldtoken"},
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["access_token"] == "newtoken"
+
+    # Old token is now revoked — second refresh with same token fails
+    resp2 = await client.post(
+        "/api/v1/auth/refresh",
+        headers={"Authorization": "Bearer oldtoken"},
+    )
+    assert resp2.status_code == 401
