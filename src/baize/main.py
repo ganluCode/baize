@@ -11,6 +11,7 @@ from baize.core.config import Settings
 from baize.core.container import Container
 from baize.core.deps import set_container
 from baize.llm.router import router as llm_router
+from baize.session.router import router as session_router
 from baize.user.auth_router import router as auth_router
 from baize.user.router import router as user_router
 from baize.user.seed import seed_admin_user
@@ -45,6 +46,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
+app.include_router(session_router, prefix="/api/v1")
 
 
 @app.get("/health")

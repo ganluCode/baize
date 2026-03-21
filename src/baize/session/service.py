@@ -76,6 +76,57 @@ class SessionService:
         """
         return await self._message_repo.get_recent(session_id, limit)
 
+    async def create_session(
+        self,
+        user_id: uuid.UUID,
+        agent_id: uuid.UUID,
+        title: str | None = None,
+    ) -> SessionModel:
+        """Create a new session for a given user and agent.
+
+        Args:
+            user_id: The user who owns the session.
+            agent_id: The agent this session belongs to.
+            title: Optional session title.
+
+        Returns:
+            The newly created SessionModel.
+        """
+        session = await self._session_repo.create(user_id=user_id, agent_id=agent_id, title=title)
+        logger.debug("Created session %s for user %s / agent %s.", session.id, user_id, agent_id)
+        return session
+
+    async def list_sessions(
+        self,
+        user_id: uuid.UUID,
+        agent_id: uuid.UUID,
+        status: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[SessionModel], int]:
+        """Return paginated sessions for a user and agent, ordered by updated_at desc.
+
+        Args:
+            user_id: Only return sessions belonging to this user.
+            agent_id: Only return sessions for this agent.
+            status: Optional status filter (SessionStatus value).
+            limit: Maximum number of records to return.
+            offset: Number of records to skip.
+
+        Returns:
+            A tuple of (items, total_count).
+        """
+        from baize.session.models import SessionStatus
+
+        status_enum = SessionStatus(status) if status is not None else None
+        return await self._session_repo.list_by_agent(
+            user_id=user_id,
+            agent_id=agent_id,
+            status=status_enum,
+            limit=limit,
+            offset=offset,
+        )
+
     async def get_or_create_session(
         self,
         session_id: uuid.UUID | None,
