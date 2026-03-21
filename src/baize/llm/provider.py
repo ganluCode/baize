@@ -156,6 +156,26 @@ class ProviderFactory:
         self._chat_cache[cache_key] = instance
         return instance  # type: ignore[return-value]
 
+    def list_providers(self) -> list[dict]:
+        """Return all configured providers with availability status (no sensitive fields).
+
+        Returns:
+            List of dicts with keys: name, type, status, models.
+            Sensitive fields (api_key, base_url) are excluded.
+        """
+        result = []
+        for name, provider in self._providers.items():
+            status = "unavailable" if name in self._unavailable else "available"
+            result.append(
+                {
+                    "name": name,
+                    "type": provider.type,
+                    "status": status,
+                    "models": [{"id": m.id, "usage": m.usage} for m in provider.models],
+                }
+            )
+        return result
+
     def get_embedding_model(self, provider_name: str, model_id: str) -> OpenAIEmbeddings:
         """Return a cached embedding model instance.
 
