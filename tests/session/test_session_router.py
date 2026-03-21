@@ -225,3 +225,138 @@ async def test_list_sessions_only_returns_current_user_data(client_auth, mock_sv
 
     call_kwargs = mock_svc.list_sessions.call_args
     assert call_kwargs.kwargs["user_id"] == regular_user.id
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/sessions/{session_id}
+# ---------------------------------------------------------------------------
+
+
+async def test_get_session_returns_200_when_found(client_auth, mock_svc):
+    mock_svc.get_session.return_value = _make_session_response()
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(_SESSION_ID)
+    assert body["user_id"] == str(_USER_ID)
+
+
+async def test_get_session_not_found_returns_404(client_auth, mock_svc):
+    from fastapi import HTTPException
+
+    mock_svc.get_session.side_effect = HTTPException(status_code=404, detail="Session not found.")
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}")
+
+    assert response.status_code == 404
+
+
+async def test_get_session_wrong_owner_returns_403(client_auth, mock_svc):
+    from fastapi import HTTPException
+
+    mock_svc.get_session.side_effect = HTTPException(status_code=403, detail="Forbidden.")
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}")
+
+    assert response.status_code == 403
+
+
+async def test_get_session_calls_service_with_correct_args(client_auth, mock_svc, regular_user):
+    mock_svc.get_session.return_value = _make_session_response()
+
+    await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}")
+
+    mock_svc.get_session.assert_awaited_once_with(
+        session_id=_SESSION_ID,
+        user_id=regular_user.id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/v1/sessions/{session_id}
+# ---------------------------------------------------------------------------
+
+
+async def test_archive_session_returns_200_with_archived_status(client_auth, mock_svc):
+    mock_svc.archive_session.return_value = _make_session_response(status=SessionStatus.archived)
+
+    response = await client_auth.patch(
+        f"/api/v1/sessions/{_SESSION_ID}",
+        json={"status": "archived"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "archived"
+
+
+async def test_archive_session_invalid_status_returns_422(client_auth, mock_svc):
+    response = await client_auth.patch(
+        f"/api/v1/sessions/{_SESSION_ID}",
+        json={"status": "active"},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_archive_session_wrong_owner_returns_403(client_auth, mock_svc):
+    from fastapi import HTTPException
+
+    mock_svc.archive_session.side_effect = HTTPException(status_code=403, detail="Forbidden.")
+
+    response = await client_auth.patch(
+        f"/api/v1/sessions/{_SESSION_ID}",
+        json={"status": "archived"},
+    )
+
+    assert response.status_code == 403
+
+
+async def test_archive_session_calls_service_with_correct_args(client_auth, mock_svc, regular_user):
+    mock_svc.archive_session.return_value = _make_session_response(status=SessionStatus.archived)
+
+    await client_auth.patch(
+        f"/api/v1/sessions/{_SESSION_ID}",
+        json={"status": "archived"},
+    )
+
+    mock_svc.archive_session.assert_awaited_once_with(
+        session_id=_SESSION_ID,
+        user_id=regular_user.id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/sessions/{session_id}
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_session_returns_204(client_auth, mock_svc):
+    mock_svc.delete_session.return_value = None
+
+    response = await client_auth.delete(f"/api/v1/sessions/{_SESSION_ID}")
+
+    assert response.status_code == 204
+
+
+async def test_delete_session_wrong_owner_returns_403(client_auth, mock_svc):
+    from fastapi import HTTPException
+
+    mock_svc.delete_session.side_effect = HTTPException(status_code=403, detail="Forbidden.")
+
+    response = await client_auth.delete(f"/api/v1/sessions/{_SESSION_ID}")
+
+    assert response.status_code == 403
+
+
+async def test_delete_session_calls_service_with_correct_args(client_auth, mock_svc, regular_user):
+    mock_svc.delete_session.return_value = None
+
+    await client_auth.delete(f"/api/v1/sessions/{_SESSION_ID}")
+
+    mock_svc.delete_session.assert_awaited_once_with(
+        session_id=_SESSION_ID,
+        user_id=regular_user.id,
+    )

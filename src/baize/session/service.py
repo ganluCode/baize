@@ -127,6 +127,73 @@ class SessionService:
             offset=offset,
         )
 
+    async def get_session(
+        self,
+        session_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> SessionModel:
+        """Return a session by id, enforcing ownership.
+
+        Args:
+            session_id: The session to retrieve.
+            user_id: The requesting user's id.
+
+        Returns:
+            The SessionModel if found and owned by the user.
+
+        Raises:
+            HTTPException: 404 if not found, 403 if not owned by the user.
+        """
+        session = await self._session_repo.get_by_id(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        if session.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Forbidden.")
+        return session
+
+    async def archive_session(
+        self,
+        session_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> SessionModel:
+        """Archive a session, enforcing ownership.
+
+        Args:
+            session_id: The session to archive.
+            user_id: The requesting user's id.
+
+        Returns:
+            The updated SessionModel with status=archived.
+
+        Raises:
+            HTTPException: 404 if not found, 403 if not owned by the user.
+        """
+        from baize.session.models import SessionStatus
+
+        await self.get_session(session_id, user_id)
+        updated = await self._session_repo.update(session_id, status=SessionStatus.archived)
+        assert updated is not None
+        logger.debug("Archived session %s.", session_id)
+        return updated
+
+    async def delete_session(
+        self,
+        session_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> None:
+        """Delete a session, enforcing ownership.
+
+        Args:
+            session_id: The session to delete.
+            user_id: The requesting user's id.
+
+        Raises:
+            HTTPException: 404 if not found, 403 if not owned by the user.
+        """
+        await self.get_session(session_id, user_id)
+        await self._session_repo.delete(session_id)
+        logger.debug("Deleted session %s.", session_id)
+
     async def get_or_create_session(
         self,
         session_id: uuid.UUID | None,
