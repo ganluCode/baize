@@ -10,6 +10,8 @@ from typing import Any
 from fastapi import Depends
 
 from baize.core.container import Container
+from baize.llm.model_router import ModelRouter
+from baize.llm.provider import ProviderFactory
 
 # Global container instance — set by main.py lifespan via set_container().
 _container: Container | None = None
@@ -86,3 +88,13 @@ def get_task_service(container: Container = Depends(get_container)) -> Any:
     TODO: Return typed TaskService once the task feature is implemented.
     """
     return container.task_service
+
+
+def get_provider_factory(container: Container = Depends(get_container)) -> ProviderFactory:
+    """Dependency factory for ProviderFactory."""
+    return container.provider_factory
+
+
+def get_model_router(container: Container = Depends(get_container)) -> ModelRouter:
+    """Dependency factory for ModelRouter."""
+    return container.model_router
