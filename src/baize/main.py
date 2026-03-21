@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from baize.core.config import Settings
 from baize.core.container import Container
 from baize.core.deps import set_container
+from baize.user.auth_router import router as auth_router
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(auth_router, prefix="/api/v1")
 
 
 @app.get("/health")

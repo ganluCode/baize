@@ -6,6 +6,7 @@ import redis.asyncio as aioredis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from baize.core.config import Settings
+from baize.user.jwt_service import JWTService
 
 
 class Container:
@@ -25,6 +26,9 @@ class Container:
         # Infrastructure
         self.db: AsyncEngine = _db_engine
         self.redis: aioredis.Redis = aioredis.from_url(config.redis_url)
+
+        # User / auth
+        self.jwt_service: JWTService = JWTService(secret_key=config.secret_key, redis=self.redis)
 
         # TODO(memory): Filled by memory feature implementation
         self.memory_service: Any | None = None
