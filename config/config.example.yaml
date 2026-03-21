@@ -28,7 +28,7 @@ llm:
     - name: newapi
       type: openai
       base_url: "http://newapi.local:3000/v1"
-      api_key: ${NEWAPI_API_KEY}
+      api_key: ${NEWAPI_KEY}
       models:
         - id: text-embedding-3-small
           usage:
@@ -37,9 +37,9 @@ llm:
 agents:
   - name: default
     models:
-      chat: doubao-pro-256k
-      reasoning: claude-sonnet-4-6
-      embedding: text-embedding-3-small
+      chat: doubao/doubao-pro-256k
+      reasoning: claude/claude-sonnet-4-6
+      embedding: newapi/text-embedding-3-small
     prompt_file: config/prompts/default_agent.md
 
 memory:
@@ -61,5 +61,5 @@ memory:
       provider: openai
       config:
         model: text-embedding-3-small
-        api_key: ${NEWAPI_API_KEY}
+        api_key: ${NEWAPI_KEY}
         base_url: "http://newapi.local:3000/v1"
