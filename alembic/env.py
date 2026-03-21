@@ -15,10 +15,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Import application metadata here when models are defined, e.g.:
-# from baize.models import Base
-# target_metadata = Base.metadata
-target_metadata = None
+# Import all models so their metadata is registered before autogenerate.
+import baize.session.models  # noqa: F401
+import baize.user.models  # noqa: F401
+from baize.user.models import Base
+
+target_metadata = Base.metadata
 
 
 def _get_database_url() -> str:
