@@ -8,10 +8,14 @@ instance initialised in the application lifespan.
 from typing import Any
 
 from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.core.container import Container
+from baize.core.database import get_db
 from baize.llm.model_router import ModelRouter
 from baize.llm.provider import ProviderFactory
+from baize.session.repository import ChatMessageRepository, SessionRepository
+from baize.session.service import SessionService
 
 # Global container instance — set by main.py lifespan via set_container().
 _container: Container | None = None
@@ -50,12 +54,11 @@ def get_memory_service(container: Container = Depends(get_container)) -> Any:
     return container.memory_service
 
 
-def get_session_service(container: Container = Depends(get_container)) -> Any:
-    """Dependency factory for SessionService.
-
-    TODO: Return typed SessionService once the session feature is implemented.
-    """
-    return container.session_service
+def get_session_service(db: AsyncSession = Depends(get_db)) -> SessionService:
+    """Dependency factory for SessionService — builds a per-request instance."""
+    session_repo = SessionRepository(db)
+    message_repo = ChatMessageRepository(db)
+    return SessionService(session_repo=session_repo, message_repo=message_repo)
 
 
 def get_user_service(container: Container = Depends(get_container)) -> Any:
