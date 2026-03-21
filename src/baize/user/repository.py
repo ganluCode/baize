@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.user.models import UserModel
@@ -44,6 +44,29 @@ class UserRepository:
         await self._session.commit()
         await self._session.refresh(user)
         return user
+
+    async def list_with_total(
+        self, skip: int = 0, limit: int = 20
+    ) -> tuple[list[UserModel], int]:
+        """Return a paginated list of users and the total count.
+
+        Args:
+            skip: Number of records to skip.
+            limit: Maximum number of records to return.
+
+        Returns:
+            A tuple of (users, total_count).
+        """
+        count_result = await self._session.execute(
+            select(func.count()).select_from(UserModel)
+        )
+        total = count_result.scalar_one()
+
+        users_result = await self._session.execute(
+            select(UserModel).offset(skip).limit(limit)
+        )
+        items = list(users_result.scalars().all())
+        return items, total
 
     async def update(self, user: UserModel, data: dict) -> UserModel:
         """Update only the fields present in data and persist the changes."""
