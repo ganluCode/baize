@@ -194,6 +194,30 @@ class SessionService:
         await self._session_repo.delete(session_id)
         logger.debug("Deleted session %s.", session_id)
 
+    async def list_messages(
+        self,
+        session_id: uuid.UUID,
+        user_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[ChatMessageModel], int]:
+        """Return paginated messages for a session, enforcing ownership.
+
+        Args:
+            session_id: The session whose messages to retrieve.
+            user_id: The requesting user's id.
+            limit: Maximum number of messages to return.
+            offset: Number of messages to skip.
+
+        Returns:
+            A tuple of (items, total_count) ordered by created_at ascending.
+
+        Raises:
+            HTTPException: 404 if session not found, 403 if not owned by the user.
+        """
+        await self.get_session(session_id, user_id)
+        return await self._message_repo.list_by_session(session_id, limit=limit, offset=offset)
+
     async def get_or_create_session(
         self,
         session_id: uuid.UUID | None,

@@ -7,7 +7,14 @@ from fastapi import APIRouter, Depends, status
 
 from baize.core.deps import get_session_service
 from baize.session.models import SessionStatus
-from baize.session.schemas import SessionCreate, SessionListResponse, SessionResponse, SessionUpdate
+from baize.session.schemas import (
+    ChatMessageResponse,
+    MessageListResponse,
+    SessionCreate,
+    SessionListResponse,
+    SessionResponse,
+    SessionUpdate,
+)
 from baize.session.service import SessionService
 from baize.user.deps import get_current_user
 from baize.user.models import UserModel
@@ -112,6 +119,36 @@ async def archive_session(
     """
     session = await svc.archive_session(session_id=session_id, user_id=current_user.id)
     return SessionResponse.model_validate(session)
+
+
+@session_router.get("/{session_id}/messages", response_model=MessageListResponse)
+async def list_messages(
+    session_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    current_user: UserModel = Depends(get_current_user),
+    svc: SessionService = Depends(get_session_service),
+) -> MessageListResponse:
+    """Return paginated messages for a session owned by the authenticated user.
+
+    Messages are ordered by created_at ascending.
+
+    Returns:
+        MessageListResponse with items and total count.
+
+    Raises:
+        HTTPException: 401 if not authenticated, 404 if session not found, 403 if not owner.
+    """
+    items, total = await svc.list_messages(
+        session_id=session_id,
+        user_id=current_user.id,
+        limit=limit,
+        offset=offset,
+    )
+    return MessageListResponse(
+        items=[ChatMessageResponse.model_validate(m) for m in items],
+        total=total,
+    )
 
 
 @session_router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,4 +1,4 @@
-"""Tests for session create and list API endpoints (F-007)."""
+"""Tests for session create, list, and messages API endpoints (F-007, F-008, F-009)."""
 
 import os
 import uuid
@@ -15,8 +15,8 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 from baize.main import app  # noqa: E402
-from baize.session.schemas import SessionResponse  # noqa: E402
-from baize.session.models import SessionStatus  # noqa: E402
+from baize.session.schemas import ChatMessageResponse, SessionResponse  # noqa: E402
+from baize.session.models import MessageRole, SessionStatus  # noqa: E402
 from baize.user.deps import get_current_user  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
@@ -360,3 +360,104 @@ async def test_delete_session_calls_service_with_correct_args(client_auth, mock_
         session_id=_SESSION_ID,
         user_id=regular_user.id,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/sessions/{session_id}/messages  (F-009)
+# ---------------------------------------------------------------------------
+
+_MSG_ID = uuid.uuid4()
+
+
+def _make_message_response(**kwargs) -> ChatMessageResponse:
+    defaults = dict(
+        id=_MSG_ID,
+        session_id=_SESSION_ID,
+        user_id=_USER_ID,
+        role=MessageRole.user,
+        content="hello",
+        tool_calls=None,
+        tool_name=None,
+        token_usage=None,
+        created_at=_NOW,
+    )
+    defaults.update(kwargs)
+    return ChatMessageResponse(**defaults)
+
+
+async def test_list_messages_returns_200_with_schema(client_auth, mock_svc):
+    mock_svc.list_messages.return_value = ([_make_message_response()], 1)
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+
+
+async def test_list_messages_each_message_has_required_fields(client_auth, mock_svc):
+    mock_svc.list_messages.return_value = (
+        [_make_message_response(tool_calls={"name": "x"}, tool_name="x", token_usage={"in": 1})],
+        1,
+    )
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages")
+
+    assert response.status_code == 200
+    msg = response.json()["items"][0]
+    for field in ("id", "role", "content", "tool_calls", "tool_name", "token_usage", "created_at"):
+        assert field in msg, f"Missing field: {field}"
+
+
+async def test_list_messages_not_found_returns_404(client_auth, mock_svc):
+    mock_svc.list_messages.side_effect = HTTPException(status_code=404, detail="Session not found.")
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages")
+
+    assert response.status_code == 404
+
+
+async def test_list_messages_wrong_owner_returns_403(client_auth, mock_svc):
+    mock_svc.list_messages.side_effect = HTTPException(status_code=403, detail="Forbidden.")
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages")
+
+    assert response.status_code == 403
+
+
+async def test_list_messages_without_auth_returns_401(client_no_auth):
+    response = await client_no_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages")
+
+    assert response.status_code == 401
+
+
+async def test_list_messages_default_params(client_auth, mock_svc, regular_user):
+    mock_svc.list_messages.return_value = ([], 0)
+
+    await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages")
+
+    mock_svc.list_messages.assert_awaited_once_with(
+        session_id=_SESSION_ID,
+        user_id=regular_user.id,
+        limit=50,
+        offset=0,
+    )
+
+
+async def test_list_messages_pagination_params(client_auth, mock_svc, regular_user):
+    mock_svc.list_messages.return_value = ([], 0)
+
+    await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages?limit=10&offset=5")
+
+    call_kwargs = mock_svc.list_messages.call_args.kwargs
+    assert call_kwargs["limit"] == 10
+    assert call_kwargs["offset"] == 5
+
+
+async def test_list_messages_total_reflects_all_messages(client_auth, mock_svc):
+    mock_svc.list_messages.return_value = ([_make_message_response()], 42)
+
+    response = await client_auth.get(f"/api/v1/sessions/{_SESSION_ID}/messages?limit=1")
+
+    assert response.json()["total"] == 42
