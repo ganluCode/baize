@@ -11,6 +11,7 @@ from baize.core.config import Settings
 from baize.core.container import Container
 from baize.core.deps import set_container
 from baize.user.auth_router import router as auth_router
+from baize.user.router import router as user_router
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ app.add_middleware(
 
 
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(user_router, prefix="/api/v1")
 
 
 @app.get("/health")
