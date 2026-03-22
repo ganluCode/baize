@@ -63,6 +63,7 @@ def upgrade() -> None:
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("tool_calls", postgresql.JSONB(), nullable=True),
         sa.Column("tool_name", sa.String(100), nullable=True),
+        sa.Column("token_usage", postgresql.JSONB(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
     op.create_index("ix_chat_messages_session_created", "chat_messages", ["session_id", "created_at"])
