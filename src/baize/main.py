@@ -4,6 +4,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +12,7 @@ from baize.agent.router import router as agent_router
 from baize.core.config import Settings
 from baize.core.container import Container
 from baize.core.deps import set_container
+from baize.core.logging import setup_logging
 from baize.llm.router import router as llm_router
 from baize.session.router import router as session_router
 from baize.session.router import session_router as session_detail_router
@@ -25,8 +27,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: initialize resources on startup, release on shutdown."""
-    logger.info("Baize API starting up...")
     settings = Settings()
+    setup_logging(settings.log_level)
+    structlog.get_logger().info("application_startup", version="0.1.0")
     container = Container(settings)
     set_container(container)
     await seed_admin_user()

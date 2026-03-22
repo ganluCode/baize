@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
+import structlog
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -40,6 +42,7 @@ _DEFAULT_AGENT_TOOLS = [
 ]
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger(__name__)
 
 
 class AgentServiceError(Exception):
@@ -340,10 +343,25 @@ class AgentService:
             :class:`ChatEvent` instances of type "token", "tool_call", "tool_result",
             "done", or "error".
         """
+        _slog.info(
+            "chat_request",
+            user_id=str(user_id),
+            session_id=str(session_id),
+            agent_id=str(agent_id),
+        )
+
         # 1. Load agent config (validates ownership)
         try:
             agent_config = await self._agent_config_svc.get(agent_id, user_id)
         except AgentServiceError as exc:
+            _slog.error(
+                "agent_error",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                user_id=str(user_id),
+                session_id=str(session_id),
+                agent_id=str(agent_id),
+            )
             yield ChatEvent(type="error", payload={"message": str(exc)})
             return
 
@@ -394,8 +412,25 @@ class AgentService:
             HumanMessage(content=message),
         ]
 
+        # Build LangGraph run config (inject LangFuse handler when available)
+        from baize.core.observability import create_langfuse_handler
+
+        langfuse_handler = create_langfuse_handler()
+        run_config: dict = {
+            "configurable": {"thread_id": str(session.id)},
+            "metadata": {
+                "user_id": str(user_id),
+                "session_id": str(session_id),
+                "agent_id": str(agent_id),
+            },
+        }
+        if langfuse_handler is not None:
+            run_config["callbacks"] = [langfuse_handler]
+
         tool_call_count = 0
         current_response = ""
+        _llm_start_time: float = 0.0
+        _tool_start_times: dict[str, float] = {}
 
         # 9. Stream with timeout guard
         try:
@@ -407,13 +442,14 @@ class AgentService:
                         "agent_id": str(agent_id),
                         "shared_memory": resolved_memory.shared_memory,
                     },
-                    config={"configurable": {"thread_id": str(session.id)}},
+                    config=run_config,
                     version="v2",
                 ):
                     event_type = event.get("event", "")
 
                     if event_type == "on_chat_model_start":
                         current_response = ""
+                        _llm_start_time = time.monotonic()
 
                     elif event_type == "on_chat_model_stream":
                         chunk = event["data"].get("chunk")
@@ -423,8 +459,22 @@ class AgentService:
                                 current_response += content
                                 yield ChatEvent(type="token", payload={"content": content})
 
+                    elif event_type == "on_chat_model_end":
+                        latency_ms = int((time.monotonic() - _llm_start_time) * 1000)
+                        output = event.get("data", {}).get("output")
+                        usage = getattr(output, "usage_metadata", None) or {}
+                        _slog.debug(
+                            "llm_call",
+                            model=event.get("name", ""),
+                            prompt_tokens=usage.get("input_tokens", 0),
+                            completion_tokens=usage.get("output_tokens", 0),
+                            latency_ms=latency_ms,
+                        )
+
                     elif event_type == "on_tool_start":
                         tool_call_count += 1
+                        tool_name = event.get("name", "")
+                        _tool_start_times[tool_name] = time.monotonic()
                         if tool_call_count > _MAX_TOOL_CALLS:
                             yield ChatEvent(
                                 type="error",
@@ -434,22 +484,36 @@ class AgentService:
                         yield ChatEvent(
                             type="tool_call",
                             payload={
-                                "tool": event.get("name", ""),
+                                "tool": tool_name,
                                 "args": event["data"].get("input", {}),
                             },
                         )
 
                     elif event_type == "on_tool_end":
+                        tool_name = event.get("name", "")
+                        start = _tool_start_times.pop(tool_name, time.monotonic())
+                        duration_ms = int((time.monotonic() - start) * 1000)
                         output = event["data"].get("output", "")
                         output_str = output.content if hasattr(output, "content") else str(output)
+                        _slog.info("tool_call", tool_name=tool_name, duration_ms=duration_ms)
                         yield ChatEvent(
                             type="tool_result",
-                            payload={"tool": event.get("name", ""), "result": output_str},
+                            payload={"tool": tool_name, "result": output_str},
                         )
 
         except TimeoutError:
             yield ChatEvent(type="error", payload={"message": "对话超时（120秒），请稍后重试。"})
             return
+        except Exception as exc:
+            _slog.error(
+                "agent_error",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                user_id=str(user_id),
+                session_id=str(session_id),
+                agent_id=str(agent_id),
+            )
+            raise
 
         # 10. Persist messages
         user_msg = await self._session_svc.save_message(

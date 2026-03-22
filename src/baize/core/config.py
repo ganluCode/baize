@@ -9,7 +9,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 from pydantic import Field
@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     newapi_api_key: str = ""
 
     debug: bool = False
+
+    # Observability
+    langfuse_public_key: Optional[str] = None
+    langfuse_secret_key: Optional[str] = None
+    langfuse_host: str = "http://langfuse:3000"
+    log_level: str = "INFO"
 
     # --- yaml config (populated after model init) ---
     yaml_config: dict[str, Any] = {}
