@@ -5,6 +5,8 @@ touches the development database.  The schema is created once per module
 and each test function gets its own engine + clean tables.
 """
 
+from dotenv import load_dotenv
+load_dotenv()
 import asyncio
 import hashlib
 import os
