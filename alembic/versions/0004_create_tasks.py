@@ -9,6 +9,7 @@ Create Date: 2026-03-22 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 from alembic import op
@@ -20,26 +21,20 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _create_enum_if_not_exists(conn, name: str, values: list[str]) -> None:
+    exists = conn.execute(
+        text("SELECT 1 FROM pg_type WHERE typname = :name"), {"name": name}
+    ).scalar()
+    if not exists:
+        vals = ", ".join(f"'{v}'" for v in values)
+        conn.execute(text(f"CREATE TYPE {name} AS ENUM ({vals})"))
+
+
 def upgrade() -> None:
-    # Create enum types (IF NOT EXISTS avoids errors on re-run with asyncpg)
-    op.execute("""
-        DO $$ BEGIN
-            CREATE TYPE task_priority AS ENUM ('low', 'medium', 'high');
-        EXCEPTION WHEN duplicate_object THEN NULL;
-        END $$
-    """)
-    op.execute("""
-        DO $$ BEGIN
-            CREATE TYPE task_status AS ENUM ('todo', 'in_progress', 'done');
-        EXCEPTION WHEN duplicate_object THEN NULL;
-        END $$
-    """)
-    op.execute("""
-        DO $$ BEGIN
-            CREATE TYPE task_source AS ENUM ('manual', 'agent');
-        EXCEPTION WHEN duplicate_object THEN NULL;
-        END $$
-    """)
+    conn = op.get_bind()
+    _create_enum_if_not_exists(conn, "task_priority", ["low", "medium", "high"])
+    _create_enum_if_not_exists(conn, "task_status", ["todo", "in_progress", "done"])
+    _create_enum_if_not_exists(conn, "task_source", ["manual", "agent"])
 
     op.create_table(
         "tasks",
