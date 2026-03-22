@@ -1,5 +1,22 @@
 # Progress
 
+## F-015: Default Agent Prompt + Auto-Init (rework attempt 3)
+
+**Status**: PASSED
+
+Implementation was already complete and `task_list.json` already had `passes: true` set.
+All acceptance criteria are met:
+
+- `config/prompts/default_agent.md` exists with 白泽（Baize）persona, `{{ user_name }}` and `{{ current_date }}` variables
+- `AgentConfigService.create_default_agent(user_id)` reads the prompt file, sets tools and `is_default=True`
+- `UserService.create_user()` calls `create_default_agent(user_id)` after user creation (with error swallowing)
+- Tests cover: default tools used, is_default=True enforced, prompt file read, fallback on missing file, UserService integration
+
+**Tests**: All 359 tests pass including F-015 related tests in `tests/agent/test_agent_service.py` and `tests/user/test_user_service.py`
+**Regression**: 359/359 tests passed across full suite
+
+The previous rework block reason was "Agent did not report passes: true" — implementation was already complete.
+
 ## F-011: Context Compressor (rework attempt 1)
 
 **Status**: PASSED
