@@ -1,7 +1,7 @@
 """create sessions and chat_messages tables
 
 Revision ID: 0001
-Revises:
+Revises: 0000
 Create Date: 2026-03-22 00:00:00.000000
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "0001"
-down_revision: str | None = None
+down_revision: str | None = '0000'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
