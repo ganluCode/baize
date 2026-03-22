@@ -1,14 +1,31 @@
-"""AgentConfigService: business logic for agent configuration management."""
+"""AgentConfigService and AgentService: business logic for agent management and chat."""
 
+from __future__ import annotations
+
+import asyncio
 import logging
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, AsyncIterator
 
+from fastapi import HTTPException
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+from baize.agent.context import compress_history
+from baize.agent.graph import build_react_graph
 from baize.agent.models import AgentConfig
+from baize.agent.prompt import assemble_system_prompt
 from baize.agent.repository import AgentConfigRepository
 from baize.agent.schemas import AgentCreate, AgentResponse, AgentUpdate
 from baize.agent.tools import ToolRegistry
+from baize.session.models import MessageRole
 from baize.session.service import SessionService
+
+if TYPE_CHECKING:
+    from baize.llm.model_router import ModelRouter
+    from baize.memory.interface import Memory, MemoryServiceInterface
+    from baize.user.models import UserModel
 
 _DEFAULT_AGENT_PROMPT_PATH = (
     Path(__file__).parents[3] / "config" / "prompts" / "default_agent.md"
@@ -218,3 +235,225 @@ class AgentConfigService:
         await self._session_service.delete_sessions_by_agent(agent_id)
         await self._repo.delete(agent_id)
         logger.debug("Deleted agent %s and its sessions.", agent_id)
+
+
+# ---------------------------------------------------------------------------
+# AgentService — chat orchestration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ChatEvent:
+    """A single streaming event from AgentService.chat().
+
+    Attributes:
+        type: Event kind — "token" | "tool_call" | "tool_result" | "done" | "error".
+        payload: Event-specific data dict.
+    """
+
+    type: str
+    payload: dict = field(default_factory=dict)
+
+
+_MAX_TOOL_CALLS: int = 10
+_CHAT_TIMEOUT: float = 120.0
+
+
+def _history_to_lc_messages(messages):
+    """Convert a list of ChatMessageModel to LangChain BaseMessage objects."""
+    from baize.session.models import ChatMessageModel
+
+    result = []
+    for msg in messages:
+        if msg.role == MessageRole.user:
+            result.append(HumanMessage(content=msg.content))
+        elif msg.role == MessageRole.assistant:
+            result.append(AIMessage(content=msg.content))
+        elif msg.role == MessageRole.system:
+            result.append(SystemMessage(content=msg.content))
+        # tool-role messages are skipped (not directly representable for replay)
+    return result
+
+
+class AgentService:
+    """Orchestrates a complete chat turn: prompt assembly, LangGraph execution, and persistence.
+
+    Args:
+        agent_config_service: Used to load and validate AgentConfig.
+        session_service: Used to load history, create sessions, and save messages.
+        memory_service: Optional memory backend for auto-recall.
+        model_router: Resolves the LLM instance to use.
+    """
+
+    def __init__(
+        self,
+        agent_config_service: AgentConfigService,
+        session_service: SessionService,
+        memory_service: "MemoryServiceInterface | None",
+        model_router: "ModelRouter",
+    ) -> None:
+        self._agent_config_svc = agent_config_service
+        self._session_svc = session_service
+        self._memory_svc = memory_service
+        self._model_router = model_router
+
+    async def _get_or_create_session(self, session_id: uuid.UUID, user_id: uuid.UUID, agent_id: uuid.UUID):
+        """Return the session if found, or create a new one if not found.
+
+        Args:
+            session_id: The requested session id.
+            user_id: Owner user id.
+            agent_id: Owner agent id.
+
+        Returns:
+            An existing or newly created SessionModel.
+        """
+        try:
+            return await self._session_svc.get_session(session_id, user_id)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                logger.debug("Session %s not found; creating a new one.", session_id)
+                return await self._session_svc.create_session(user_id, agent_id)
+            raise
+
+    async def chat(
+        self,
+        agent_id: uuid.UUID,
+        session_id: uuid.UUID,
+        user_id: uuid.UUID,
+        message: str,
+        user: "UserModel",
+    ) -> AsyncIterator[ChatEvent]:
+        """Execute a single chat turn and stream events to the caller.
+
+        Orchestrates: agent loading → session setup → memory recall → prompt assembly →
+        context compression → LangGraph execution → message persistence.
+
+        Args:
+            agent_id: The agent to chat with.
+            session_id: Session to continue (auto-created if not found).
+            user_id: The authenticated user's id.
+            message: The user's input message.
+            user: The authenticated UserModel (for prompt assembly).
+
+        Yields:
+            :class:`ChatEvent` instances of type "token", "tool_call", "tool_result",
+            "done", or "error".
+        """
+        # 1. Load agent config (validates ownership)
+        try:
+            agent_config = await self._agent_config_svc.get(agent_id, user_id)
+        except AgentServiceError as exc:
+            yield ChatEvent(type="error", payload={"message": str(exc)})
+            return
+
+        # 2. Load or auto-create session
+        session = await self._get_or_create_session(session_id, user_id, agent_id)
+
+        # 3. Memory recall (if enabled)
+        memories: list[Memory] = []
+        if agent_config.auto_memory_recall and self._memory_svc is not None:
+            try:
+                memories = await self._memory_svc.search(message, top_k=5)
+            except Exception:
+                logger.warning("Memory recall failed; continuing without memories.", exc_info=True)
+
+        # 4. Assemble system prompt
+        system_prompt = assemble_system_prompt(agent_config, user, memories)
+
+        # 5. Load and compress conversation history
+        history_models = await self._session_svc.get_history(session.id)
+        lc_history = _history_to_lc_messages(history_models)
+
+        llm = self._model_router.get_chat_model("default")
+        compressed_history = await compress_history(lc_history, llm)
+
+        # 6. Resolve tools
+        tool_names: list[str] = list(agent_config.tools or [])
+        tool_entries = ToolRegistry.get_by_names(tool_names)
+        tools = [e.langchain_tool for e in tool_entries if e.langchain_tool is not None]
+
+        # 7. Build ReAct graph (fresh per request)
+        graph = build_react_graph(llm, tools)
+
+        # 8. Compose initial messages
+        initial_messages = [
+            SystemMessage(content=system_prompt),
+            *compressed_history,
+            HumanMessage(content=message),
+        ]
+
+        tool_call_count = 0
+        current_response = ""
+
+        # 9. Stream with timeout guard
+        try:
+            async with asyncio.timeout(_CHAT_TIMEOUT):
+                async for event in graph.astream_events(
+                    {
+                        "messages": initial_messages,
+                        "user_id": str(user_id),
+                        "agent_id": str(agent_id),
+                    },
+                    config={"configurable": {"thread_id": str(session.id)}},
+                    version="v2",
+                ):
+                    event_type = event.get("event", "")
+
+                    if event_type == "on_chat_model_start":
+                        current_response = ""
+
+                    elif event_type == "on_chat_model_stream":
+                        chunk = event["data"].get("chunk")
+                        if chunk is not None and hasattr(chunk, "content"):
+                            content = chunk.content
+                            if isinstance(content, str) and content:
+                                current_response += content
+                                yield ChatEvent(type="token", payload={"content": content})
+
+                    elif event_type == "on_tool_start":
+                        tool_call_count += 1
+                        if tool_call_count > _MAX_TOOL_CALLS:
+                            yield ChatEvent(
+                                type="error",
+                                payload={"message": f"工具调用次数超过上限（{_MAX_TOOL_CALLS}次）。"},
+                            )
+                            return
+                        yield ChatEvent(
+                            type="tool_call",
+                            payload={
+                                "tool": event.get("name", ""),
+                                "args": event["data"].get("input", {}),
+                            },
+                        )
+
+                    elif event_type == "on_tool_end":
+                        output = event["data"].get("output", "")
+                        output_str = output.content if hasattr(output, "content") else str(output)
+                        yield ChatEvent(
+                            type="tool_result",
+                            payload={"tool": event.get("name", ""), "result": output_str},
+                        )
+
+        except TimeoutError:
+            yield ChatEvent(type="error", payload={"message": "对话超时（120秒），请稍后重试。"})
+            return
+
+        # 10. Persist messages
+        user_msg = await self._session_svc.save_message(
+            session_id=session.id,
+            user_id=user_id,
+            role=MessageRole.user,
+            content=message,
+        )
+        await self._session_svc.save_message(
+            session_id=session.id,
+            user_id=user_id,
+            role=MessageRole.assistant,
+            content=current_response,
+        )
+
+        yield ChatEvent(
+            type="done",
+            payload={"session_id": str(session.id), "message_id": str(user_msg.id)},
+        )
