@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.session.models import ChatMessageModel, MessageRole, SessionModel, SessionStatus
@@ -106,6 +106,19 @@ class SessionRepository:
         if obj is not None:
             await self._session.delete(obj)
             await self._session.commit()
+
+    async def delete_by_agent_id(self, agent_id: uuid.UUID) -> None:
+        """Delete all sessions belonging to the given agent.
+
+        chat_messages are removed via CASCADE on the FK.
+
+        Args:
+            agent_id: All sessions with this agent_id will be deleted.
+        """
+        await self._session.execute(
+            delete(SessionModel).where(SessionModel.agent_id == agent_id)
+        )
+        await self._session.commit()
 
 
 class ChatMessageRepository:

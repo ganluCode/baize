@@ -178,6 +178,17 @@ class SessionService:
         logger.debug("Archived session %s.", session_id)
         return updated
 
+    async def delete_sessions_by_agent(self, agent_id: uuid.UUID) -> None:
+        """Delete all sessions (and their messages) for a given agent.
+
+        Intended for use during agent deletion cascades.
+
+        Args:
+            agent_id: All sessions owned by this agent will be deleted.
+        """
+        await self._session_repo.delete_by_agent_id(agent_id)
+        logger.debug("Deleted all sessions for agent %s.", agent_id)
+
     async def delete_session(
         self,
         session_id: uuid.UUID,

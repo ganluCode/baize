@@ -20,6 +20,7 @@ class AgentCreate(BaseModel):
     llm_config: dict[str, Any] | None = Field(default=None, alias="model_config")
     auto_memory_recall: bool | None = None
     shared_memory: bool | None = None
+    is_default: bool = False
 
 
 class AgentUpdate(BaseModel):
@@ -34,6 +35,7 @@ class AgentUpdate(BaseModel):
     llm_config: dict[str, Any] | None = Field(default=None, alias="model_config")
     auto_memory_recall: bool | None = None
     shared_memory: bool | None = None
+    is_default: bool | None = None
 
 
 class AgentResponse(BaseModel):
