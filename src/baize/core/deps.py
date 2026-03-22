@@ -89,10 +89,7 @@ def get_agent_config_service(db: AsyncSession = Depends(get_db)) -> AgentConfigS
 
 
 def get_task_service(container: Container = Depends(get_container)) -> Any:
-    """Dependency factory for TaskService.
-
-    TODO: Return typed TaskService once the task feature is implemented.
-    """
+    """Dependency factory for TaskEngineService (used by agent tools)."""
     return container.task_service
 
 

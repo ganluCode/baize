@@ -7,13 +7,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from baize.agent.router import router as agent_router
 from baize.core.config import Settings
 from baize.core.container import Container
 from baize.core.deps import set_container
-from baize.agent.router import router as agent_router
 from baize.llm.router import router as llm_router
 from baize.session.router import router as session_router
 from baize.session.router import session_router as session_detail_router
+from baize.task.router import router as task_router
 from baize.user.auth_router import router as auth_router
 from baize.user.router import router as user_router
 from baize.user.seed import seed_admin_user
@@ -51,6 +52,7 @@ app.include_router(llm_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(session_router, prefix="/api/v1")
 app.include_router(session_detail_router, prefix="/api/v1")
+app.include_router(task_router, prefix="/api/v1")
 
 
 @app.get("/health")

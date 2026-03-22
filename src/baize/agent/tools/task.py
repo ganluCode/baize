@@ -1,23 +1,32 @@
 """Built-in task/checklist agent tools: create_task, list_tasks, complete_task.
 
 All three tools are registered with permission='auto' and delegate all work to
-the TaskService obtained via :func:`_get_task_service`.  When the task service
-is not yet initialised the tools return a user-friendly message instead of
-raising an exception.
+the TaskEngineService obtained via :func:`_get_task_service`.  When the task
+service is not yet initialised the tools return a user-friendly message instead
+of raising an exception.
+
+user_id is injected by the LangGraph framework (InjectedState) and is NOT
+exposed to the LLM in the tool schema.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+import uuid
+from typing import TYPE_CHECKING, Annotated, Any
+
+from langgraph.prebuilt import InjectedState
 
 from baize.agent.tools import register_tool
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
 
 def _get_task_service() -> Any | None:
-    """Return the TaskService from the global container, or None.
+    """Return the TaskEngineService from the global container, or None.
 
     Avoids hard-importing the container at module load time; the container may
     not be initialised when this module is first imported.
@@ -32,77 +41,136 @@ def _get_task_service() -> Any | None:
         return None
 
 
-@register_tool(permission="auto", description="Create a new task in the checklist.")
+@register_tool(permission="auto", description="在任务清单中为当前用户创建一个新任务")
 async def create_task(
     title: str,
+    state: Annotated[dict, InjectedState],
     due_date: str | None = None,
     priority: str = "medium",
 ) -> str:
-    """Create a new task in the checklist.
+    """在任务清单中为当前用户创建一个新任务。
 
     Args:
-        title: Title of the task.
-        due_date: Optional due date string (e.g. "2026-03-25").
-        priority: Priority level — "low", "medium", or "high" (default "medium").
+        title: 任务标题（必填）。
+        state: 注入的图状态，包含 user_id。不暴露给 LLM。
+        due_date: 可选截止日期字符串，格式为 "YYYY-MM-DD"。
+        priority: 优先级，可选 "low"、"medium"（默认）或 "high"。
 
     Returns:
-        Confirmation string with the new task ID, or a status message.
+        包含任务 ID 和标题的确认字符串，或错误描述。
     """
     svc = _get_task_service()
     if svc is None:
         return "任务服务尚未初始化，无法创建任务。"
 
-    task = await svc.create(title=title, due_date=due_date, priority=priority)
-    return f"已创建任务（ID: {task.id}）：{title}"
+    user_id_str: str = state.get("user_id", "")
+    if not user_id_str:
+        return "无法获取用户信息，无法创建任务。"
+
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        return "用户 ID 格式无效，无法创建任务。"
+
+    try:
+        from baize.task.models import TaskSource
+
+        task = await svc.create_task(
+            user_id=user_id,
+            title=title,
+            due_date=due_date,
+            priority=priority,
+            source=TaskSource.agent,
+        )
+        due_str = f"，截止：{task.due_date}" if task.due_date else ""
+        return f"已创建任务（ID: {task.id}）：{title}{due_str}"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("create_task failed: %s", exc)
+        return f"创建任务失败：{exc}"
 
 
-@register_tool(permission="auto", description="List tasks from the checklist.")
-async def list_tasks(status: str = "pending") -> str:
-    """List tasks filtered by status.
+@register_tool(permission="auto", description="查询当前用户的任务清单，可按状态过滤")
+async def list_tasks(
+    state: Annotated[dict, InjectedState],
+    status: str = "todo",
+) -> str:
+    """查询当前用户的任务清单，可按状态过滤。
 
     Args:
-        status: Task status to filter by — "pending", "completed", etc.
-                Defaults to "pending".
+        state: 注入的图状态，包含 user_id。不暴露给 LLM。
+        status: 按状态过滤，可选 "todo"（默认）、"in_progress"、"done" 或 "all"（不过滤）。
 
     Returns:
-        Formatted string listing matching tasks, or a status message.
+        格式化的任务列表字符串，或提示信息。
     """
     svc = _get_task_service()
     if svc is None:
         return "任务服务尚未初始化，无法查询任务。"
 
-    tasks = await svc.list_by_user(status=status)
+    user_id_str: str = state.get("user_id", "")
+    if not user_id_str:
+        return "无法获取用户信息，无法查询任务。"
+
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        return "用户 ID 格式无效，无法查询任务。"
+
+    tasks = await svc.list_tasks(user_id=user_id, status=status if status != "all" else None)
 
     if not tasks:
-        return f"没有{status}状态的任务。"
+        return "暂无待办任务。" if status == "todo" else f"暂无{status}状态的任务。"
 
-    lines = [f"## 任务列表（{status}）"]
-    for i, task in enumerate(tasks, start=1):
-        priority_label = getattr(task, "priority", "medium")
-        due = getattr(task, "due_date", None)
-        due_str = f"，截止：{due}" if due else ""
-        lines.append(f"{i}. [{task.id}] {task.title}（优先级：{priority_label}{due_str}）")
-
+    status_label = "全部" if status == "all" else status
+    lines = [f"## 任务列表（{status_label}）"]
+    for task in tasks:
+        due_str = str(task.due_date) if task.due_date else "无"
+        lines.append(
+            f"- {task.title} | 优先级: {task.priority.value} | 截止: {due_str} | 状态: {task.status.value}"
+        )
     return "\n".join(lines)
 
 
-@register_tool(permission="auto", description="Mark a task as completed.")
-async def complete_task(task_id: str) -> str:
-    """Mark a task as completed.
+@register_tool(permission="auto", description="通过标题模糊匹配，将当前用户的一个待办任务标记为完成")
+async def complete_task(
+    task_title: str,
+    state: Annotated[dict, InjectedState],
+) -> str:
+    """通过标题模糊匹配，将当前用户的一个待办任务标记为完成。
 
     Args:
-        task_id: The ID of the task to complete.
+        task_title: 要完成的任务标题（支持模糊匹配）。
+        state: 注入的图状态，包含 user_id。不暴露给 LLM。
 
     Returns:
-        Confirmation string, or an error description if the task does not exist.
+        完成确认字符串、候选任务列表或"未找到"提示。
     """
     svc = _get_task_service()
     if svc is None:
         return "任务服务尚未初始化，无法完成任务。"
 
+    user_id_str: str = state.get("user_id", "")
+    if not user_id_str:
+        return "无法获取用户信息，无法完成任务。"
+
     try:
-        await svc.complete(task_id)
-        return f"任务 {task_id} 已标记为完成。"
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        return "用户 ID 格式无效，无法完成任务。"
+
+    try:
+        matches = await svc.search_todo_by_title(user_id=user_id, title=task_title)
+
+        if not matches:
+            return f'未找到包含 "{task_title}" 的待办任务。'
+
+        if len(matches) > 1:
+            candidates = "\n".join(f"- {t.title}（ID: {t.id}）" for t in matches)
+            return f'找到多个匹配 "{task_title}" 的待办任务，请确认要完成哪一个：\n{candidates}'
+
+        task = matches[0]
+        await svc.mark_done(user_id=user_id, task_id=task.id)
+        return f'任务 "{task.title}" 已标记为完成。'
     except Exception as exc:  # noqa: BLE001
-        logger.warning("complete_task failed for task_id=%s: %s", task_id, exc)
+        logger.warning("complete_task failed: %s", exc)
         return f"完成任务失败：{exc}"

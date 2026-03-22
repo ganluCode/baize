@@ -61,8 +61,10 @@ class Container:
         # TODO(agent): Filled by agent feature implementation
         self.agent_service: Any | None = None
 
-        # TODO(task): Filled by task feature implementation
-        self.task_service: Any | None = None
+        # Task layer
+        from baize.task.service import TaskEngineService
+
+        self.task_service: TaskEngineService = TaskEngineService(engine=self.db)
 
     def _init_memory_service(self, config: Settings) -> MemoryServiceInterface | None:
         """Attempt to initialise the configured memory backend.
