@@ -16,6 +16,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import all models so their metadata is registered before autogenerate.
+import baize.agent.models  # noqa: F401
 import baize.session.models  # noqa: F401
 import baize.user.models  # noqa: F401
 from baize.user.models import Base

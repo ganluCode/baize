@@ -15,8 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import Table, Column, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Set env vars before any baize import
@@ -28,6 +27,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 from baize.main import app as _app  # noqa: E402
 from baize.core.database import get_db  # noqa: E402
 from baize.core.deps import get_container  # noqa: E402
+import baize.agent.models  # noqa: F401 – registers AgentConfig in Base.metadata
 from baize.session.models import ChatMessageModel, MessageRole, SessionModel  # noqa: E402
 from baize.user.models import Base, UserModel  # noqa: E402
 
@@ -36,14 +36,6 @@ from baize.user.models import Base, UserModel  # noqa: E402
 # ---------------------------------------------------------------------------
 
 TEST_DATABASE_URL = "postgresql+asyncpg://baize:password@localhost:5432/baize_test"
-
-# Register the agent_configs stub table so Base.metadata.create_all creates it.
-_agent_configs_table = Table(
-    "agent_configs",
-    Base.metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True),
-    extend_existing=True,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +113,43 @@ async def _create_user(db: AsyncSession, api_key: str, name: str = "testuser") -
     return user
 
 
-async def _create_agent(db: AsyncSession) -> uuid.UUID:
-    """Insert a minimal agent_configs row and return its id."""
+async def _create_agent(db: AsyncSession, user_id: uuid.UUID | None = None) -> uuid.UUID:
+    """Insert a minimal agent_configs row and return its id.
+
+    If *user_id* is not provided a throwaway system_users row is created to
+    satisfy the FK constraint introduced by the F-001 AgentConfig model.
+    """
+    if user_id is None:
+        tmp_id = uuid.uuid4()
+        await db.execute(
+            text(
+                "INSERT INTO system_users (id, email, name, password, role, is_active)"
+                " VALUES (:id, :email, :name, :password, :role, :is_active)"
+            ),
+            {
+                "id": str(tmp_id),
+                "email": f"agent-owner-{tmp_id}@internal",
+                "name": f"agent-owner-{tmp_id}",
+                "password": "unused",
+                "role": "user",
+                "is_active": True,
+            },
+        )
+        user_id = tmp_id
+
     agent_id = uuid.uuid4()
     await db.execute(
-        text("INSERT INTO agent_configs (id) VALUES (:id)"),
-        {"id": str(agent_id)},
+        text(
+            "INSERT INTO agent_configs (id, user_id, name, system_prompt, is_default)"
+            " VALUES (:id, :user_id, :name, :system_prompt, :is_default)"
+        ),
+        {
+            "id": str(agent_id),
+            "user_id": str(user_id),
+            "name": "Test Agent",
+            "system_prompt": "You are a helpful assistant.",
+            "is_default": False,
+        },
     )
     await db.commit()
     return agent_id
