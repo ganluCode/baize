@@ -7,11 +7,15 @@ and parses config/config.yaml with ${ENV_VAR} placeholder substitution.
 import logging
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import Field
 from pydantic_settings import BaseSettings
+
+from baize.memory.config import MemoryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +95,21 @@ class Settings(BaseSettings):
     # --- yaml config (populated after model init) ---
     yaml_config: dict[str, Any] = {}
 
+    # --- memory config (populated from yaml in model_post_init) ---
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     def model_post_init(self, __context: Any) -> None:
         """Load and attach the YAML config after field validation."""
-        object.__setattr__(self, "yaml_config", load_yaml_config())
+        yaml_cfg = load_yaml_config()
+        object.__setattr__(self, "yaml_config", yaml_cfg)
+        yaml_memory = yaml_cfg.get("memory")
+        if yaml_memory:
+            object.__setattr__(self, "memory", MemoryConfig.model_validate(yaml_memory))
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the singleton :class:`Settings` instance (cached after first call)."""
+    return Settings()
