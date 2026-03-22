@@ -35,7 +35,7 @@ from baize.user.models import Base, UserModel  # noqa: E402
 # Test DB configuration
 # ---------------------------------------------------------------------------
 
-TEST_DATABASE_URL = "postgresql+asyncpg://baize:password@localhost:5432/baize_test"
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql+asyncpg://baize:password@localhost:5432/baize_test")
 
 
 # ---------------------------------------------------------------------------
