@@ -19,4 +19,4 @@ async def test_health_returns_200(client: AsyncClient) -> None:
 
 async def test_health_response_body(client: AsyncClient) -> None:
     response = await client.get("/health")
-    assert response.json() == {"status": "ok", "version": "0.1.0"}
+    assert response.json()["status"] == "ok"

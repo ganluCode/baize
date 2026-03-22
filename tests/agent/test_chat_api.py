@@ -164,7 +164,8 @@ async def test_chat_invalid_api_key_returns_401_json(app, mock_agent_svc):
     assert response.status_code == 401
     # Must be JSON, not event-stream
     assert response.headers["content-type"].startswith("application/json")
-    assert "detail" in response.json()
+    # Response uses ApiResponse format (F-002)
+    assert response.json()["code"] == 40100
 
 
 async def test_chat_no_auth_header_returns_401_json(app, mock_agent_svc):
