@@ -474,3 +474,158 @@ class TestMem0AdapterListAll:
         assert len(results) == 2
         assert results[0].id == "m2"
         assert results[1].id == "m3"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for search tests
+# ---------------------------------------------------------------------------
+
+
+def _make_search_item(
+    id: str = "mem-001",
+    memory: str = "Test content",
+    user_id: str = "user-1",
+    agent_id: str | None = None,
+    shared: bool = True,
+    score: float = 0.9,
+) -> dict:
+    """Build a dict resembling a mem0 search result item."""
+    item: dict = {
+        "id": id,
+        "memory": memory,
+        "user_id": user_id,
+        "score": score,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "metadata": {"shared": shared},
+    }
+    if agent_id is not None:
+        item["agent_id"] = agent_id
+        item["metadata"]["agent_id"] = agent_id
+    return item
+
+
+# ---------------------------------------------------------------------------
+# Tests: search()
+# ---------------------------------------------------------------------------
+
+
+class TestMem0AdapterSearch:
+    async def test_search_calls_client_with_query_and_user_id(self) -> None:
+        """search() calls mem0_client.search() with query and user_id."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.search.return_value = {"results": []}
+        adapter._client = mock_client
+
+        await adapter.search(query="test query", user_id="user-1")
+
+        mock_client.search.assert_called_once()
+        call_kwargs = mock_client.search.call_args
+        # first positional arg is query
+        assert call_kwargs.args[0] == "test query"
+        assert call_kwargs.kwargs.get("user_id") == "user-1"
+
+    async def test_search_returns_empty_list_when_no_results(self) -> None:
+        """search() returns [] when mem0 returns no results."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.search.return_value = {"results": []}
+        adapter._client = mock_client
+
+        results = await adapter.search(query="anything", user_id="user-1")
+        assert results == []
+
+    async def test_search_without_agent_id_returns_only_shared(self) -> None:
+        """Without agent_id, search() only returns items with shared=True."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "results": [
+                _make_search_item(id="m1", shared=True, score=0.9),
+                _make_search_item(id="m2", shared=False, score=0.8),
+                _make_search_item(id="m3", shared=True, score=0.7),
+            ]
+        }
+        adapter._client = mock_client
+
+        results = await adapter.search(query="test", user_id="user-1")
+
+        ids = [r.id for r in results]
+        assert "m1" in ids
+        assert "m3" in ids
+        assert "m2" not in ids
+
+    async def test_search_with_agent_id_returns_shared_and_agent_private(self) -> None:
+        """With agent_id, search() returns shared=True items + private items of that agent."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "results": [
+                _make_search_item(id="shared-1", shared=True, agent_id=None, score=0.9),
+                _make_search_item(id="private-agent1", shared=False, agent_id="agent-1", score=0.8),
+                _make_search_item(id="private-agent2", shared=False, agent_id="agent-2", score=0.7),
+                _make_search_item(id="shared-2", shared=True, agent_id="agent-1", score=0.6),
+            ]
+        }
+        adapter._client = mock_client
+
+        results = await adapter.search(query="test", user_id="user-1", agent_id="agent-1")
+
+        ids = [r.id for r in results]
+        assert "shared-1" in ids
+        assert "private-agent1" in ids
+        assert "shared-2" in ids
+        assert "private-agent2" not in ids  # private to agent-2, not agent-1
+
+    async def test_search_results_sorted_by_score_descending(self) -> None:
+        """search() returns results sorted by score descending."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "results": [
+                _make_search_item(id="m1", shared=True, score=0.5),
+                _make_search_item(id="m2", shared=True, score=0.9),
+                _make_search_item(id="m3", shared=True, score=0.7),
+            ]
+        }
+        adapter._client = mock_client
+
+        results = await adapter.search(query="test", user_id="user-1")
+
+        scores = [r.score for r in results]
+        assert scores == sorted(scores, reverse=True)
+        assert results[0].id == "m2"
+
+    async def test_search_top_k_limits_results(self) -> None:
+        """search() passes top_k to mem0_client.search() to control max results."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.search.return_value = {"results": []}
+        adapter._client = mock_client
+
+        await adapter.search(query="test", user_id="user-1", top_k=3)
+
+        call_kwargs = mock_client.search.call_args.kwargs
+        assert call_kwargs.get("limit") == 3
+
+    async def test_search_returns_memory_items(self) -> None:
+        """search() returns list[MemoryItem] with correct field mapping."""
+        from baize.memory.interface import MemoryItem
+
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "results": [
+                _make_search_item(id="m1", memory="relevant fact", shared=True, score=0.95),
+            ]
+        }
+        adapter._client = mock_client
+
+        results = await adapter.search(query="fact", user_id="user-1")
+
+        assert len(results) == 1
+        assert isinstance(results[0], MemoryItem)
+        assert results[0].id == "m1"
+        assert results[0].content == "relevant fact"
+        assert results[0].score == pytest.approx(0.95)

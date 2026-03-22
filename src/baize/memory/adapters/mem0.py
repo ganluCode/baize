@@ -233,7 +233,35 @@ class Mem0Adapter(MemoryServiceInterface):
         agent_id: str | None = None,
         top_k: int = 5,
     ) -> list[MemoryItem]:
-        raise NotImplementedError("Implemented in F-005")
+        """Search memories by semantic similarity with visibility filtering.
+
+        Returns shared memories always; when *agent_id* is provided, also
+        returns that agent's private (``shared=False``) memories.
+
+        Results are sorted by score descending.
+
+        Args:
+            query: The search query string.
+            user_id: Owner of the memories to search.
+            agent_id: When specified, private memories for this agent are included.
+            top_k: Maximum number of results to request from mem0.
+
+        Returns:
+            List of :class:`MemoryItem` sorted by score descending.
+        """
+        result = self._client.search(query, user_id=user_id, limit=top_k)
+        raw_items: list[dict[str, Any]] = result.get("results", [])
+
+        filtered: list[MemoryItem] = []
+        for raw in raw_items:
+            item = self._map_item(raw)
+            if item.shared:
+                filtered.append(item)
+            elif agent_id is not None and item.agent_id == agent_id:
+                filtered.append(item)
+
+        filtered.sort(key=lambda m: m.score if m.score is not None else 0.0, reverse=True)
+        return filtered
 
     async def get(self, memory_id: str) -> MemoryItem | None:
         """Retrieve a single memory by its ID.
