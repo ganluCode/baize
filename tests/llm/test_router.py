@@ -12,6 +12,7 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
+from baize.auth.deps import get_optional_user  # noqa: E402
 from baize.core.deps import get_provider_factory  # noqa: E402
 from baize.llm.provider import (  # noqa: E402
     ProviderFactory,
@@ -71,10 +72,12 @@ def mock_factory() -> MagicMock:
 async def client(app, mock_user, mock_factory):
     """Async client with auth and provider_factory dependencies overridden."""
     app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[get_optional_user] = lambda: mock_user.id
     app.dependency_overrides[get_provider_factory] = lambda: mock_factory
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_optional_user, None)
     app.dependency_overrides.pop(get_provider_factory, None)
 
 
@@ -87,10 +90,12 @@ async def client_no_auth(app, mock_factory):
 
     app.dependency_overrides[get_provider_factory] = lambda: mock_factory
     app.dependency_overrides[get_current_user] = _raise_401
+    app.dependency_overrides[get_optional_user] = _raise_401
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.pop(get_provider_factory, None)
     app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_optional_user, None)
 
 
 # ---------------------------------------------------------------------------

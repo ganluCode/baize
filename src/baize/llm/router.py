@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from baize.auth.deps import get_optional_user
 from baize.core.deps import get_provider_factory
 from baize.llm.provider import ProviderFactory
 from baize.user.deps import get_current_user
@@ -35,11 +36,12 @@ class TestResponse(BaseModel):
 
 @router.get("/providers")
 async def list_providers(
-    _current_user: UserModel = Depends(get_current_user),
+    _caller: str | None = Depends(get_optional_user),
     factory: ProviderFactory = Depends(get_provider_factory),
 ) -> list[dict[str, Any]]:
     """Return all configured LLM providers with their availability status.
 
+    Accessible by both authenticated users and internal services (Service Key).
     Sensitive fields (api_key, base_url) are excluded from the response.
 
     Returns:

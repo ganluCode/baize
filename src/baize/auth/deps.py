@@ -89,3 +89,28 @@ async def get_current_user(
     if auth.auth_type == "service":
         raise HTTPException(status_code=403, detail="User context required")
     return auth.user_id  # type: ignore[return-value]
+
+
+async def get_optional_user(
+    auth: AuthResult = Depends(get_auth_result),
+) -> str | None:
+    """Resolve the current user ID, allowing service-level authentication.
+
+    Unlike :func:`get_current_user`, Service Key authentication is accepted and
+    returns ``None`` instead of raising an error.  This is intended for
+    endpoints that can be called by both users and internal services (e.g. the
+    LLM providers list).
+
+    Args:
+        auth: Authentication result from :func:`get_auth_result`.
+
+    Returns:
+        The authenticated user's ID string, or ``None`` for service auth.
+
+    Raises:
+        HTTPException: 401 (propagated from :func:`get_auth_result`) when no
+            valid credentials are present.
+    """
+    if auth.auth_type == "service":
+        return None
+    return auth.user_id  # type: ignore[return-value]

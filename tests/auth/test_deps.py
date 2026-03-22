@@ -13,7 +13,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 from fastapi import HTTPException  # noqa: E402
 
-from baize.auth.deps import get_auth_result, get_current_user  # noqa: E402
+from baize.auth.deps import get_auth_result, get_current_user, get_optional_user  # noqa: E402
 from baize.auth.schemas import AuthResult  # noqa: E402
 
 
@@ -214,5 +214,43 @@ class TestGetCurrentUser:
         auth = AuthResult(user_id=user_id, auth_type="api_key")
 
         result = await get_current_user(auth=auth)
+
+        assert result == user_id
+
+
+# ---------------------------------------------------------------------------
+# get_optional_user tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetOptionalUser:
+    """Tests for the get_optional_user dependency."""
+
+    @pytest.mark.asyncio
+    async def test_service_auth_returns_none(self):
+        """Service key auth returns None without raising."""
+        auth = AuthResult(user_id=None, auth_type="service")
+
+        result = await get_optional_user(auth=auth)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_jwt_auth_returns_user_id(self):
+        """Valid JWT auth returns the user_id string."""
+        user_id = str(uuid.uuid4())
+        auth = AuthResult(user_id=user_id, auth_type="jwt")
+
+        result = await get_optional_user(auth=auth)
+
+        assert result == user_id
+
+    @pytest.mark.asyncio
+    async def test_api_key_auth_returns_user_id(self):
+        """Valid API key auth returns the user_id string."""
+        user_id = str(uuid.uuid4())
+        auth = AuthResult(user_id=user_id, auth_type="api_key")
+
+        result = await get_optional_user(auth=auth)
 
         assert result == user_id
