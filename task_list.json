@@ -1,0 +1,299 @@
+[
+  {
+    "id": "F-001",
+    "description": "创建 AgentConfig SQLAlchemy ORM 模型和 Alembic 迁移脚本，建立 agent_configs 表（含所有字段、索引和约束）",
+    "acceptance": [
+      "agent_configs 表包含 id(UUID PK)、user_id(UUID FK)、name(varchar 100)、description(varchar 500)、system_prompt(text)、tools(JSONB)、model_config(JSONB)、auto_memory_recall(boolean nullable)、shared_memory(boolean nullable)、is_default(boolean not null default false)、created_at、updated_at 字段",
+      "存在 (user_id, is_default) 联合索引",
+      "alembic upgrade head 无报错完成迁移",
+      "alembic downgrade -1 可回滚",
+      "SQLAlchemy 模型在 src/baize/agent/models.py 中定义"
+    ],
+    "depends_on": [],
+    "complexity": "low",
+    "passes": true
+  },
+  {
+    "id": "F-002",
+    "description": "定义 AgentConfig Pydantic schemas：AgentCreate、AgentUpdate、AgentResponse，含字段校验规则",
+    "acceptance": [
+      "AgentCreate 包含 name(必填, max_length=100)、system_prompt(必填)、tools(必填, list[str])、description(可选)、model_config(可选)、auto_memory_recall(可选)、shared_memory(可选) 字段",
+      "AgentUpdate 所有字段可选（PATCH 语义）",
+      "AgentResponse 包含所有字段含 id、user_id、is_default、created_at、updated_at",
+      "name 为空字符串时 AgentCreate 校验失败并抛出 ValidationError",
+      "schemas 在 src/baize/agent/schemas.py 中定义"
+    ],
+    "depends_on": [],
+    "complexity": "low",
+    "passes": true
+  },
+  {
+    "id": "F-003",
+    "description": "实现 AgentConfigRepository：基于 SQLAlchemy async session 的 CRUD 操作，含 get_default_by_user 查询方法",
+    "acceptance": [
+      "实现 create(user_id, data) → AgentConfig",
+      "实现 get_by_id(agent_id) → Optional[AgentConfig]",
+      "实现 list_by_user(user_id) → List[AgentConfig]",
+      "实现 update(agent_id, data) → Optional[AgentConfig]",
+      "实现 delete(agent_id) → bool",
+      "实现 get_default_by_user(user_id) → Optional[AgentConfig]",
+      "实现 set_default(user_id, agent_id)：将该 user 下所有 agent 的 is_default 置为 false，再将指定 agent 置为 true",
+      "所有方法使用 async/await，repository 在 src/baize/agent/repository.py"
+    ],
+    "depends_on": [
+      "F-001"
+    ],
+    "complexity": "low",
+    "passes": true
+  },
+  {
+    "id": "F-004",
+    "description": "实现 AgentConfigService：业务逻辑层，含默认智能体唯一性约束、tools 字段合法性校验、删除级联逻辑",
+    "acceptance": [
+      "创建智能体时，若 is_default=true，自动将该用户其他智能体的 is_default 置为 false",
+      "每个用户至少保留一个 is_default=true 的智能体，删除默认智能体时返回 400 错误",
+      "创建/更新时，tools 列表中的工具名须在 ToolRegistry 中注册，否则返回 400 并列出非法工具名",
+      "删除智能体时，通过 SessionService 级联删除其下所有 Session 和 ChatMessage",
+      "service 在 src/baize/agent/service.py，通过依赖注入接收 repository 和 session_service"
+    ],
+    "depends_on": [
+      "F-002",
+      "F-003"
+    ],
+    "complexity": "medium",
+    "passes": true
+  },
+  {
+    "id": "F-005",
+    "description": "实现 AgentConfig CRUD API 路由：POST/GET/PUT/DELETE /api/v1/agents，含 API Key 认证和响应模型",
+    "acceptance": [
+      "POST /api/v1/agents 创建成功返回 201 和 AgentResponse JSON",
+      "GET /api/v1/agents 返回 200 和当前用户的智能体列表",
+      "GET /api/v1/agents/{agent_id} 存在返回 200，不存在返回 404",
+      "PUT /api/v1/agents/{agent_id} 更新成功返回 200，不存在返回 404",
+      "DELETE /api/v1/agents/{agent_id} 删除成功返回 204，不存在返回 404",
+      "未提供 API Key 返回 401，提供无效 API Key 返回 401",
+      "访问其他用户的智能体返回 404（不泄露存在性）",
+      "路由在 src/baize/agent/router.py，注册到 main.py"
+    ],
+    "depends_on": [
+      "F-004"
+    ],
+    "complexity": "low",
+    "passes": true
+  },
+  {
+    "id": "F-006",
+    "description": "实现工具注册框架：@register_tool 装饰器、ToolRegistry 单例、permission 级别枚举（auto/confirm/disabled），含工具元数据存储",
+    "acceptance": [
+      "@register_tool(permission='auto') 可装饰 async 函数，自动注册到 ToolRegistry",
+      "ToolRegistry.get(name) 返回工具实例，name 不存在返回 None",
+      "ToolRegistry.get_all_names() 返回所有已注册工具名列表",
+      "ToolRegistry.get_by_names(names) 返回指定名称的工具列表，过滤掉 disabled 权限的工具",
+      "同名工具重复注册时启动期间抛出 ValueError",
+      "每个工具存储 name、description、permission、langchain_tool（BaseTool 实例）",
+      "框架在 src/baize/agent/tools/__init__.py"
+    ],
+    "depends_on": [],
+    "complexity": "medium",
+    "passes": true
+  },
+  {
+    "id": "F-007",
+    "description": "实现内置记忆工具 save_memory 和 search_memory，通过依赖注入调用 MemoryServiceInterface，permission=auto",
+    "acceptance": [
+      "save_memory(content: str, metadata: dict = {}) → str，调用 memory_service.add_memory() 成功返回确认字符串，失败返回错误描述",
+      "search_memory(query: str, top_k: int = 5) → str，调用 memory_service.search() 返回格式化的记忆列表字符串",
+      "两个工具均以 @register_tool(permission='auto') 注册",
+      "工具函数通过 get_memory_service() 获取服务实例（使用 Python contextvars 或运行时注入，避免全局状态）",
+      "memory_service 为 None 时（服务未初始化），工具返回提示信息而非崩溃",
+      "工具在 src/baize/agent/tools/memory.py"
+    ],
+    "depends_on": [
+      "F-006"
+    ],
+    "complexity": "low",
+    "passes": true
+  },
+  {
+    "id": "F-008",
+    "description": "实现内置清单工具 create_task、list_tasks、complete_task，通过依赖注入调用 TaskService，permission=auto",
+    "acceptance": [
+      "create_task(title: str, due_date: str = None, priority: str = 'medium') → str，调用 task_service.create() 返回创建成功信息含任务 ID",
+      "list_tasks(status: str = 'pending') → str，调用 task_service.list_by_user() 返回格式化的任务列表字符串",
+      "complete_task(task_id: str) → str，调用 task_service.complete() 返回确认信息，任务不存在返回错误描述",
+      "三个工具均以 @register_tool(permission='auto') 注册",
+      "task_service 为 None 时返回提示信息而非崩溃",
+      "工具在 src/baize/agent/tools/task.py"
+    ],
+    "depends_on": [
+      "F-006"
+    ],
+    "complexity": "low",
+    "passes": true
+  },
+  {
+    "id": "F-009",
+    "description": "实现 System Prompt 分层组装器：按层级（智能体专属 Prompt → 用户偏好 → 工具说明 → 记忆注入）动态拼装，支持 Jinja2 模板变量和 token 限制",
+    "acceptance": [
+      "assemble_system_prompt(agent_config, user, memories=[]) 返回完整 System Prompt 字符串",
+      "智能体 system_prompt 支持 Jinja2 变量渲染（{{ user_name }}、{{ current_date }}），渲染失败时返回原始字符串",
+      "用户 preferences 为空时跳过用户偏好层，不插入空白占位符",
+      "工具说明层仅包含 agent_config.tools 中已注册工具的 name 和 description，未注册工具自动忽略",
+      "memories 列表非空时，以\"## 关于用户的已知信息（仅供参考）\"格式附加到末尾",
+      "总 prompt token 数超过 4000 时，优先截断用户偏好层（保留前 500 token），其他层保持完整",
+      "组装器在 src/baize/agent/prompt.py"
+    ],
+    "depends_on": [
+      "F-006"
+    ],
+    "complexity": "medium",
+    "passes": true
+  },
+  {
+    "id": "F-010",
+    "description": "用 LangGraph 构建 ReAct Agent 图：AgentState TypedDict、LLM 节点（工具绑定）、ToolNode、条件路由边、compile 为可复用 graph 工厂函数",
+    "acceptance": [
+      "AgentState 包含 messages(list[BaseMessage])、user_id(str)、agent_id(str) 字段",
+      "build_react_graph(llm, tools, checkpointer=None) 函数返回 CompiledGraph",
+      "LLM 节点：绑定 tools 后调用 LLM，输出 AIMessage（含 tool_calls 或直接内容）",
+      "ToolNode 执行工具调用，工具抛出异常时捕获并返回 ToolMessage(content='Error: ...')",
+      "条件边：AIMessage.tool_calls 非空则路由到 ToolNode，否则路由到 END",
+      "图可通过 graph.astream_events(input, config) 进行异步流式执行",
+      "图定义在 src/baize/agent/graph.py，工厂函数不做全局缓存（每次 chat 按需构建）"
+    ],
+    "depends_on": [
+      "F-006",
+      "F-007",
+      "F-008"
+    ],
+    "complexity": "high",
+    "passes": true
+  },
+  {
+    "id": "F-011",
+    "description": "实现上下文压缩器：token 计数、保留最近 N 轮完整消息、LLM 摘要替代早期消息、压缩失败时截断兜底",
+    "acceptance": [
+      "compress_history(messages, llm, max_tokens=8000, keep_turns=6) 返回压缩后的消息列表",
+      "消息总 token 数未超过 max_tokens 时直接返回原列表，不调用 LLM",
+      "超出时：保留最近 keep_turns*2 条消息（user+assistant 各算1条），对更早的消息调用 LLM 生成摘要",
+      "摘要以 SystemMessage(content='[历史摘要] ...') 形式插入列表开头",
+      "LLM 调用失败时 fallback：直接丢弃最早的消息直至总 token 数低于 max_tokens，记录 warning 日志",
+      "token 计数使用 tiktoken cl100k_base 编码（与具体模型解耦）",
+      "压缩器在 src/baize/agent/context.py"
+    ],
+    "depends_on": [],
+    "complexity": "medium",
+    "passes": false
+  },
+  {
+    "id": "F-012",
+    "description": "实现 AgentService.chat() 编排逻辑：加载配置、组装 Prompt、加载/压缩历史、构建并执行 LangGraph Agent、工具调用次数和超时限制、保存消息",
+    "acceptance": [
+      "chat(agent_id, session_id, user_id, message) 返回 AsyncIterator[ChatEvent]（ChatEvent 为 dataclass 含 type 和 payload）",
+      "agent_id 不存在或不属于 user_id 时，yield error 事件后结束",
+      "session_id 不存在时自动通过 SessionService 创建新 session",
+      "auto_memory_recall=true 时，chat 开始前调用 search_memory 检索 top_k=5 记忆注入 prompt",
+      "Agent 每轮最多调用 10 次工具，超出后中断并 yield error 事件",
+      "单次对话总超时 120 秒（通过 asyncio.wait_for），超时后 yield error 事件",
+      "对话结束后，将 user message 和 assistant 完整回复保存到 session（通过 SessionService）",
+      "服务在 src/baize/agent/service.py 的 AgentService 类"
+    ],
+    "depends_on": [
+      "F-004",
+      "F-009",
+      "F-010",
+      "F-011"
+    ],
+    "complexity": "medium",
+    "passes": false
+  },
+  {
+    "id": "F-013",
+    "description": "实现 SSE 流式事件层：将 AgentService 的 ChatEvent 流转换为 sse-starlette EventSourceResponse，定义所有事件类型",
+    "acceptance": [
+      "token 事件：data={\"content\": \"...\"} 逐 token 推送 LLM 输出片段",
+      "tool_call 事件：data={\"tool\": \"...\", \"args\": {...}} 在工具调用前推送",
+      "tool_result 事件：data={\"tool\": \"...\", \"result\": \"...\"} 在工具返回后推送",
+      "confirm 事件：data={\"tool\": \"...\", \"args\": {...}, \"description\": \"...\"} 用于 confirm 级别工具",
+      "done 事件：data={\"session_id\": \"...\", \"message_id\": \"...\"} 标志对话结束",
+      "error 事件：data={\"message\": \"...\"} 表示错误，之后连接关闭",
+      "客户端断开（GeneratorExit/CancelledError）时，捕获异常停止生成，不报错",
+      "转换逻辑在 src/baize/agent/service.py 或独立 src/baize/agent/streaming.py"
+    ],
+    "depends_on": [
+      "F-012"
+    ],
+    "complexity": "medium",
+    "passes": false
+  },
+  {
+    "id": "F-014",
+    "description": "实现 Agent 对话 SSE 路由：POST /api/v1/agents/{agent_id}/sessions/{session_id}/chat，返回 text/event-stream",
+    "acceptance": [
+      "POST /api/v1/agents/{agent_id}/sessions/{session_id}/chat 接受 JSON body {\"message\": \"...\"}",
+      "请求体 message 为空字符串时返回 422",
+      "返回 Content-Type: text/event-stream，HTTP 状态码 200",
+      "未提供有效 API Key 返回 401（JSON 响应，非 SSE）",
+      "agent_id 不属于当前用户时，SSE 流中发送 error 事件后关闭",
+      "路由在 src/baize/agent/router.py，注册到 main.py"
+    ],
+    "depends_on": [
+      "F-013"
+    ],
+    "complexity": "low",
+    "passes": false
+  },
+  {
+    "id": "F-015",
+    "description": "创建默认智能体 Prompt 模板文件，并在用户创建流程中自动初始化 is_default=true 的智能体",
+    "acceptance": [
+      "config/prompts/default_agent.md 存在，内容包含\"白泽（Baize）\"人设，含 {{ user_name }} 和 {{ current_date }} Jinja2 变量",
+      "AgentConfigService 提供 create_default_agent(user_id) 方法，读取 default_agent.md 作为 system_prompt，tools 默认为 [\"save_memory\", \"search_memory\", \"create_task\", \"list_tasks\", \"complete_task\"]，is_default=true",
+      "UserService 在创建用户后自动调用 create_default_agent(user_id)",
+      "每个新用户创建后，GET /api/v1/agents 返回列表中包含一个 is_default=true 的智能体"
+    ],
+    "depends_on": [
+      "F-004"
+    ],
+    "complexity": "low",
+    "passes": false
+  },
+  {
+    "id": "F-016",
+    "description": "单元测试：工具注册框架、System Prompt 组装器、上下文压缩器、AgentConfigService 业务规则",
+    "acceptance": [
+      "test_tool_registry.py：重复注册同名工具抛出 ValueError，get_by_names 过滤 disabled 工具，get_all_names 返回完整列表",
+      "test_prompt.py：用户偏好为空时不插入偏好层，memories 非空时包含记忆注入段，token 超限时截断用户偏好层，Jinja2 模板变量正确渲染",
+      "test_context.py：未超限时不调用 LLM，超限时保留最近 keep_turns 轮，LLM 失败时 fallback 截断，摘要以 SystemMessage 形式插入",
+      "test_agent_service.py：默认智能体删除时返回 400，tools 含非注册工具名时返回 400，is_default 变更时原 default 被取消",
+      "所有测试用 pytest-asyncio 运行，mock 所有外部依赖（DB、LLM），pytest 无报错"
+    ],
+    "depends_on": [
+      "F-009",
+      "F-011",
+      "F-004"
+    ],
+    "complexity": "medium",
+    "passes": false
+  },
+  {
+    "id": "F-017",
+    "description": "API 集成测试：智能体 CRUD 端点和对话 SSE 端点的完整验收场景",
+    "acceptance": [
+      "test_agent_api.py：POST 创建智能体返回 201，GET 列表只含当前用户智能体，PUT 更新返回更新后数据，DELETE 返回 204，访问他人智能体返回 404",
+      "test_chat_api.py：使用 httpx AsyncClient + TestClient，POST chat 返回 text/event-stream，能解析出至少一个 token 事件和一个 done 事件（LLM 通过 monkeypatch mock）",
+      "test_chat_api.py：无效 API Key 对 chat 端点返回 401（JSON 格式）",
+      "test_default_agent.py：新建用户后 GET /api/v1/agents 含一个 is_default=true 的智能体，其 system_prompt 非空",
+      "pytest -x 全部通过，无跳过"
+    ],
+    "depends_on": [
+      "F-005",
+      "F-014",
+      "F-015",
+      "F-016"
+    ],
+    "complexity": "medium",
+    "passes": false
+  }
+]
