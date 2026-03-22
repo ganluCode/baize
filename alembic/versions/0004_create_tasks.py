@@ -22,9 +22,24 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # Create enum types (IF NOT EXISTS avoids errors on re-run with asyncpg)
-    op.execute("CREATE TYPE IF NOT EXISTS task_priority AS ENUM ('low', 'medium', 'high')")
-    op.execute("CREATE TYPE IF NOT EXISTS task_status AS ENUM ('todo', 'in_progress', 'done')")
-    op.execute("CREATE TYPE IF NOT EXISTS task_source AS ENUM ('manual', 'agent')")
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE task_priority AS ENUM ('low', 'medium', 'high');
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE task_status AS ENUM ('todo', 'in_progress', 'done');
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE task_source AS ENUM ('manual', 'agent');
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """)
 
     op.create_table(
         "tasks",
