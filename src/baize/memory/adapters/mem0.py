@@ -9,6 +9,7 @@ dict expected by ``mem0.Memory.from_config()``.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from mem0 import Memory
@@ -139,7 +140,57 @@ class Mem0Adapter(MemoryServiceInterface):
             ) from None
 
     # ------------------------------------------------------------------
-    # MemoryServiceInterface — stubs (implemented in F-004 / F-005)
+    # Private mapping helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime:
+        """Coerce *value* to a timezone-aware datetime.
+
+        Accepts a :class:`datetime` (naive or aware) or an ISO-8601 string.
+        Naive datetimes are assumed to be UTC.
+        """
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value
+        if isinstance(value, str):
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+        # Fallback: use current UTC time
+        return datetime.now(tz=timezone.utc)
+
+    @staticmethod
+    def _map_item(raw: dict[str, Any]) -> MemoryItem:
+        """Map a mem0 result dict to a :class:`MemoryItem`.
+
+        mem0 uses ``memory`` for the text content.  Baize metadata keys
+        ``session_id`` and ``shared`` are stored inside ``raw["metadata"]``.
+        """
+        meta: dict[str, Any] = raw.get("metadata") or {}
+        session_id: str | None = meta.get("session_id")
+        shared: bool = meta.get("shared", True)
+
+        # Remaining metadata (exclude Baize-internal keys)
+        extra_meta = {k: v for k, v in meta.items() if k not in ("session_id", "shared")}
+
+        return MemoryItem(
+            id=raw["id"],
+            content=raw.get("memory", ""),
+            user_id=raw.get("user_id", ""),
+            agent_id=raw.get("agent_id"),
+            session_id=session_id,
+            shared=shared,
+            metadata=extra_meta or None,
+            score=raw.get("score"),
+            created_at=Mem0Adapter._parse_datetime(raw.get("created_at", datetime.now(tz=timezone.utc))),
+            updated_at=Mem0Adapter._parse_datetime(raw.get("updated_at", datetime.now(tz=timezone.utc))),
+        )
+
+    # ------------------------------------------------------------------
+    # MemoryServiceInterface implementation
     # ------------------------------------------------------------------
 
     async def add(
@@ -151,7 +202,29 @@ class Mem0Adapter(MemoryServiceInterface):
         shared: bool = True,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        raise NotImplementedError("Implemented in F-004")
+        """Store a memory and return its unique ID.
+
+        Raises:
+            ValueError: If *content* is empty.
+        """
+        if not content:
+            raise ValueError("content must not be empty")
+
+        merged_meta: dict[str, Any] = dict(metadata or {})
+        merged_meta["shared"] = shared
+        if session_id is not None:
+            merged_meta["session_id"] = session_id
+
+        result = self._client.add(
+            content,
+            user_id=user_id,
+            agent_id=agent_id,
+            metadata=merged_meta,
+            infer=False,
+        )
+        memory_id: str = result["results"][0]["id"]
+        logger.debug("Memory added: id=%s user_id=%s", memory_id, user_id)
+        return memory_id
 
     async def search(
         self,
@@ -163,10 +236,27 @@ class Mem0Adapter(MemoryServiceInterface):
         raise NotImplementedError("Implemented in F-005")
 
     async def get(self, memory_id: str) -> MemoryItem | None:
-        raise NotImplementedError("Implemented in F-004")
+        """Retrieve a single memory by its ID.
+
+        Returns:
+            The :class:`MemoryItem`, or *None* if not found.
+        """
+        raw = self._client.get(memory_id)
+        if raw is None:
+            return None
+        return self._map_item(raw)
 
     async def delete(self, memory_id: str) -> bool:
-        raise NotImplementedError("Implemented in F-004")
+        """Delete a memory by its ID.
+
+        Returns:
+            *True* if deleted, *False* if the memory does not exist.
+        """
+        try:
+            self._client.delete(memory_id)
+            return True
+        except ValueError:
+            return False
 
     async def list_all(
         self,
@@ -174,4 +264,12 @@ class Mem0Adapter(MemoryServiceInterface):
         limit: int = 20,
         offset: int = 0,
     ) -> list[MemoryItem]:
-        raise NotImplementedError("Implemented in F-004")
+        """List memories for a user with limit/offset pagination.
+
+        mem0's ``get_all`` does not natively support offset, so we fetch
+        ``offset + limit`` records and slice client-side.
+        """
+        result = self._client.get_all(user_id=user_id, limit=offset + limit)
+        raw_items: list[dict[str, Any]] = result.get("results", [])
+        page = raw_items[offset : offset + limit]
+        return [self._map_item(item) for item in page]

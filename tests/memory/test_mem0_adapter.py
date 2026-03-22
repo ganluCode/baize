@@ -223,3 +223,254 @@ class TestMem0AdapterInitErrors:
         with pytest.raises(MemoryProviderConfigError, match="Invalid provider reference"):
             with patch("baize.memory.adapters.mem0.Memory"):
                 Mem0Adapter(config=config, llm_provider=factory)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for F-004 tests
+# ---------------------------------------------------------------------------
+
+
+def _make_adapter() -> Mem0Adapter:
+    """Create a Mem0Adapter with a mocked mem0 Memory client."""
+    factory = _make_factory()
+    config = _make_config(llm_provider="doubao/doubao-pro-256k")
+    with patch("baize.memory.adapters.mem0.Memory") as MockMemory:
+        MockMemory.from_config.return_value = MagicMock()
+        adapter = Mem0Adapter(config=config, llm_provider=factory)
+    return adapter
+
+
+def _make_mem0_item(
+    id: str = "mem-001",
+    memory: str = "Test content",
+    user_id: str = "user-1",
+    agent_id: str | None = None,
+    metadata: dict | None = None,
+    created_at: str = "2026-01-01T00:00:00Z",
+    updated_at: str = "2026-01-01T00:00:00Z",
+) -> dict:
+    """Build a dict resembling a mem0 API result item."""
+    item: dict = {
+        "id": id,
+        "memory": memory,
+        "user_id": user_id,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
+    if agent_id is not None:
+        item["agent_id"] = agent_id
+    if metadata is not None:
+        item["metadata"] = metadata
+    return item
+
+
+# ---------------------------------------------------------------------------
+# Tests: add()
+# ---------------------------------------------------------------------------
+
+
+class TestMem0AdapterAdd:
+    async def test_empty_content_raises_value_error(self) -> None:
+        """add() with empty string raises ValueError without calling mem0 API."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        adapter._client = mock_client
+
+        with pytest.raises(ValueError, match="content"):
+            await adapter.add(content="", user_id="user-1")
+        mock_client.add.assert_not_called()
+
+    async def test_add_calls_client_with_user_id(self) -> None:
+        """add() calls mem0_client.add() with user_id and returns memory_id string."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.add.return_value = {
+            "results": [{"id": "mem-abc", "memory": "hello", "event": "ADD"}]
+        }
+        adapter._client = mock_client
+
+        result = await adapter.add(content="hello", user_id="user-1")
+
+        assert result == "mem-abc"
+        mock_client.add.assert_called_once()
+        call_kwargs = mock_client.add.call_args.kwargs
+        assert call_kwargs.get("user_id") == "user-1"
+
+    async def test_add_stores_session_id_and_shared_in_metadata(self) -> None:
+        """add() passes session_id and shared flag into metadata."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.add.return_value = {"results": [{"id": "mem-xyz", "memory": "hi"}]}
+        adapter._client = mock_client
+
+        await adapter.add(
+            content="hi",
+            user_id="user-1",
+            session_id="sess-99",
+            shared=False,
+            agent_id="agent-7",
+        )
+
+        call_kwargs = mock_client.add.call_args.kwargs
+        meta = call_kwargs.get("metadata", {})
+        assert meta.get("session_id") == "sess-99"
+        assert meta.get("shared") is False
+
+    async def test_add_returns_string_memory_id(self) -> None:
+        """Return value of add() is always a str."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.add.return_value = {"results": [{"id": "123", "memory": "x"}]}
+        adapter._client = mock_client
+
+        result = await adapter.add(content="x", user_id="u")
+        assert isinstance(result, str)
+        assert result == "123"
+
+
+# ---------------------------------------------------------------------------
+# Tests: get()
+# ---------------------------------------------------------------------------
+
+
+class TestMem0AdapterGet:
+    async def test_get_returns_memory_item_when_found(self) -> None:
+        """get() maps mem0 result dict to MemoryItem with correct fields."""
+        from baize.memory.interface import MemoryItem
+
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.get.return_value = _make_mem0_item(
+            id="mem-001",
+            memory="Remember me",
+            user_id="user-1",
+            agent_id="agent-1",
+            metadata={"session_id": "sess-1", "shared": False},
+        )
+        adapter._client = mock_client
+
+        result = await adapter.get("mem-001")
+
+        assert isinstance(result, MemoryItem)
+        assert result.id == "mem-001"
+        assert result.content == "Remember me"
+        assert result.user_id == "user-1"
+        assert result.agent_id == "agent-1"
+        assert result.session_id == "sess-1"
+        assert result.shared is False
+
+    async def test_get_returns_none_when_not_found(self) -> None:
+        """get() returns None when mem0 client returns None."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.get.return_value = None
+        adapter._client = mock_client
+
+        result = await adapter.get("nonexistent")
+        assert result is None
+
+    async def test_get_shared_defaults_to_true_when_not_in_metadata(self) -> None:
+        """get() defaults shared=True if not present in metadata."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.get.return_value = _make_mem0_item(metadata=None)
+        adapter._client = mock_client
+
+        result = await adapter.get("mem-001")
+        assert result is not None
+        assert result.shared is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: delete()
+# ---------------------------------------------------------------------------
+
+
+class TestMem0AdapterDelete:
+    async def test_delete_returns_true_on_success(self) -> None:
+        """delete() returns True when mem0 client deletes successfully."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.delete.return_value = {"message": "Memory deleted successfully!"}
+        adapter._client = mock_client
+
+        result = await adapter.delete("mem-001")
+        assert result is True
+
+    async def test_delete_returns_false_when_not_found(self) -> None:
+        """delete() returns False when mem0 raises ValueError for missing ID."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.delete.side_effect = ValueError("Memory with id mem-999 not found")
+        adapter._client = mock_client
+
+        result = await adapter.delete("mem-999")
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: list_all()
+# ---------------------------------------------------------------------------
+
+
+class TestMem0AdapterListAll:
+    async def test_list_all_returns_list_of_memory_items(self) -> None:
+        """list_all() maps mem0 results to list[MemoryItem]."""
+        from baize.memory.interface import MemoryItem
+
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.get_all.return_value = {
+            "results": [
+                _make_mem0_item(id="m1", memory="first"),
+                _make_mem0_item(id="m2", memory="second"),
+            ]
+        }
+        adapter._client = mock_client
+
+        results = await adapter.list_all(user_id="user-1")
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+        assert all(isinstance(r, MemoryItem) for r in results)
+        assert results[0].id == "m1"
+        assert results[1].id == "m2"
+
+    async def test_list_all_returns_empty_list_when_no_results(self) -> None:
+        """list_all() returns [] when mem0 returns no results."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.get_all.return_value = {"results": []}
+        adapter._client = mock_client
+
+        results = await adapter.list_all(user_id="user-1")
+        assert results == []
+
+    async def test_list_all_passes_user_id_to_client(self) -> None:
+        """list_all() calls get_all with user_id kwarg."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.get_all.return_value = {"results": []}
+        adapter._client = mock_client
+
+        await adapter.list_all(user_id="user-42", limit=10, offset=0)
+
+        call_kwargs = mock_client.get_all.call_args.kwargs
+        assert call_kwargs.get("user_id") == "user-42"
+
+    async def test_list_all_respects_limit_and_offset(self) -> None:
+        """list_all() applies offset slicing and respects limit."""
+        adapter = _make_adapter()
+        mock_client = MagicMock()
+        mock_client.get_all.return_value = {
+            "results": [
+                _make_mem0_item(id=f"m{i}", memory=f"item {i}") for i in range(5)
+            ]
+        }
+        adapter._client = mock_client
+
+        results = await adapter.list_all(user_id="user-1", limit=2, offset=2)
+
+        assert len(results) == 2
+        assert results[0].id == "m2"
+        assert results[1].id == "m3"
