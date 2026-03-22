@@ -1,13 +1,15 @@
-"""AgentConfig CRUD API routes."""
+"""AgentConfig CRUD API routes and Agent chat SSE endpoint."""
 
 import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sse_starlette.sse import EventSourceResponse
 
-from baize.agent.schemas import AgentCreate, AgentResponse, AgentUpdate
-from baize.agent.service import AgentConfigService, AgentServiceError
-from baize.core.deps import get_agent_config_service
+from baize.agent.schemas import AgentCreate, AgentResponse, AgentUpdate, ChatRequest
+from baize.agent.service import AgentConfigService, AgentService, AgentServiceError
+from baize.agent.streaming import create_sse_response
+from baize.core.deps import get_agent_config_service, get_agent_service
 from baize.user.deps import get_current_user
 from baize.user.models import UserModel
 
@@ -119,3 +121,31 @@ async def delete_agent(
         await svc.delete(agent_id=agent_id, user_id=current_user.id)
     except AgentServiceError as exc:
         raise _service_error_to_http(exc) from exc
+
+
+@router.post("/{agent_id}/sessions/{session_id}/chat")
+async def chat_with_agent(
+    agent_id: uuid.UUID,
+    session_id: uuid.UUID,
+    body: ChatRequest,
+    current_user: UserModel = Depends(get_current_user),
+    svc: AgentService = Depends(get_agent_service),
+) -> EventSourceResponse:
+    """Stream a chat turn as server-sent events.
+
+    Returns:
+        EventSourceResponse with Content-Type: text/event-stream.
+        Emits token, tool_call, tool_result, done, and error events.
+
+    Raises:
+        HTTPException: 401 if not authenticated (before SSE begins).
+        422 if message is empty.
+    """
+    chat_iter = svc.chat(
+        agent_id=agent_id,
+        session_id=session_id,
+        user_id=current_user.id,
+        message=body.message,
+        user=current_user,
+    )
+    return create_sse_response(chat_iter)

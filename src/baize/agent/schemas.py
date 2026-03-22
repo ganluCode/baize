@@ -38,6 +38,12 @@ class AgentUpdate(BaseModel):
     is_default: bool | None = None
 
 
+class ChatRequest(BaseModel):
+    """Request body for the chat SSE endpoint."""
+
+    message: str = Field(..., min_length=1)
+
+
 class AgentResponse(BaseModel):
     """Agent configuration representation returned by the API."""
 

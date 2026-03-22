@@ -11,7 +11,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.agent.repository import AgentConfigRepository
-from baize.agent.service import AgentConfigService
+from baize.agent.service import AgentConfigService, AgentService
 from baize.core.container import Container
 from baize.core.database import get_db
 from baize.llm.model_router import ModelRouter
@@ -79,14 +79,6 @@ def get_auth_service(container: Container = Depends(get_container)) -> Any:
     return container.auth_service
 
 
-def get_agent_service(container: Container = Depends(get_container)) -> Any:
-    """Dependency factory for AgentService.
-
-    TODO: Return typed AgentService once the agent feature is implemented.
-    """
-    return container.agent_service
-
-
 def get_agent_config_service(db: AsyncSession = Depends(get_db)) -> AgentConfigService:
     """Dependency factory for AgentConfigService — builds a per-request instance."""
     agent_repo = AgentConfigRepository(db)
@@ -112,3 +104,22 @@ def get_provider_factory(container: Container = Depends(get_container)) -> Provi
 def get_model_router(container: Container = Depends(get_container)) -> ModelRouter:
     """Dependency factory for ModelRouter."""
     return container.model_router
+
+
+def get_agent_service(
+    db: AsyncSession = Depends(get_db),
+    model_router: ModelRouter = Depends(get_model_router),
+    memory_service: Any = Depends(get_memory_service),
+) -> AgentService:
+    """Dependency factory for AgentService — builds a per-request instance."""
+    agent_repo = AgentConfigRepository(db)
+    session_repo = SessionRepository(db)
+    message_repo = ChatMessageRepository(db)
+    session_svc = SessionService(session_repo=session_repo, message_repo=message_repo)
+    agent_config_svc = AgentConfigService(repository=agent_repo, session_service=session_svc)
+    return AgentService(
+        agent_config_service=agent_config_svc,
+        session_service=session_svc,
+        memory_service=memory_service,
+        model_router=model_router,
+    )
