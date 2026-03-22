@@ -4,14 +4,23 @@ Both tools are registered with permission='auto' and delegate all work to the
 MemoryServiceInterface obtained via :func:`_get_memory_service`.  When the
 memory service is not yet initialised the tools return a user-friendly message
 instead of raising an exception.
+
+user_id, agent_id, session_id and shared_memory are injected by the LangGraph
+framework (InjectedState / RunnableConfig) and are NOT exposed to the LLM.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.prebuilt import InjectedState
 
 from baize.agent.tools import register_tool
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -32,26 +41,45 @@ def _get_memory_service() -> Any | None:
         return None
 
 
-@register_tool(permission="auto", description="Save a piece of information to long-term memory.")
-async def save_memory(content: str, metadata: dict[str, Any] | None = None) -> str:
-    """Save a piece of information to long-term memory.
+@register_tool(permission="auto", description="保存一条重要信息到长期记忆")
+async def save_memory(
+    content: str,
+    state: Annotated[dict, InjectedState],
+    config: RunnableConfig,
+) -> str:
+    """保存一条重要信息到长期记忆。
 
     Args:
         content: The text content to remember.
-        metadata: Optional key-value metadata to attach to the memory.
+        state: Injected graph state — provides user_id, agent_id, shared_memory.
+               Not exposed to the Agent in the tool schema.
+        config: Injected runnable config — provides session_id via thread_id.
+                Not exposed to the Agent in the tool schema.
 
     Returns:
         Confirmation string with the stored memory ID, or an error description.
     """
+    if not content or not content.strip():
+        return "content 不能为空，无法保存记忆。"
+
     svc = _get_memory_service()
     if svc is None:
         return "记忆服务尚未初始化，无法保存记忆。"
 
-    if metadata is None:
-        metadata = {}
+    user_id: str = state.get("user_id", "")
+    agent_id: str | None = state.get("agent_id")
+    shared: bool = state.get("shared_memory", True)
+    configurable: dict = (config or {}).get("configurable", {})  # type: ignore[union-attr]
+    session_id: str | None = configurable.get("thread_id")
 
     try:
-        memory_id = await svc.add_memory(content, metadata)
+        memory_id = await svc.add(
+            content=content,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            shared=shared,
+        )
         return f"已保存记忆（ID: {memory_id}）：{content}"
     except Exception as exc:  # noqa: BLE001
         logger.warning("save_memory failed: %s", exc)

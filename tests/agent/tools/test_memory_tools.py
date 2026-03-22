@@ -1,9 +1,11 @@
-"""Unit tests for the built-in memory agent tools (F-007).
+"""Unit tests for the built-in memory agent tools (F-008).
 
 Tests cover:
 - save_memory returns a confirmation string on success
-- save_memory returns an error description when add_memory raises
+- save_memory returns an error description when svc.add raises
 - save_memory returns a "not initialised" message when service is None
+- save_memory returns an error string (not raising) when content is empty
+- save_memory passes the correct shared flag from state to svc.add
 - search_memory returns a formatted list string on success
 - search_memory returns a "not initialised" message when service is None
 - search_memory handles empty result list gracefully
@@ -34,11 +36,25 @@ def _make_memory_service(
     """Return a mock MemoryServiceInterface."""
     svc = AsyncMock()
     if add_side_effect is not None:
-        svc.add_memory.side_effect = add_side_effect
+        svc.add.side_effect = add_side_effect
     else:
-        svc.add_memory.return_value = add_return
+        svc.add.return_value = add_return
     svc.search.return_value = search_return or []
     return svc
+
+
+def _state(
+    user_id: str = "u-1",
+    agent_id: str = "a-1",
+    shared_memory: bool = True,
+) -> dict:
+    """Build a minimal AgentState dict for tool injection."""
+    return {"user_id": user_id, "agent_id": agent_id, "shared_memory": shared_memory}
+
+
+def _config(session_id: str = "s-1") -> dict:
+    """Build a minimal RunnableConfig dict for tool injection."""
+    return {"configurable": {"thread_id": session_id}}
 
 
 # ---------------------------------------------------------------------------
@@ -53,21 +69,22 @@ async def test_save_memory_returns_confirmation_on_success() -> None:
     with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
         from baize.agent.tools.memory import save_memory
 
-        result = await save_memory(content="I love Python", metadata={})
+        result = await save_memory(content="I love Python", state=_state(), config=_config())
 
-    assert "mem-abc" in result or "saved" in result.lower() or "记忆" in result
+    assert "mem-abc" in result
+    assert "I love Python" in result
 
 
 @pytest.mark.asyncio
-async def test_save_memory_returns_error_when_add_memory_raises() -> None:
+async def test_save_memory_returns_error_when_add_raises() -> None:
     svc = _make_memory_service(add_side_effect=RuntimeError("backend error"))
 
     with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
         from baize.agent.tools.memory import save_memory
 
-        result = await save_memory(content="some content", metadata={})
+        result = await save_memory(content="some content", state=_state(), config=_config())
 
-    assert "error" in result.lower() or "失败" in result or "backend error" in result
+    assert "失败" in result or "backend error" in result
 
 
 @pytest.mark.asyncio
@@ -75,24 +92,83 @@ async def test_save_memory_returns_not_initialised_when_service_is_none() -> Non
     with patch("baize.agent.tools.memory._get_memory_service", return_value=None):
         from baize.agent.tools.memory import save_memory
 
-        result = await save_memory(content="something", metadata={})
+        result = await save_memory(content="something", state=_state(), config=_config())
 
-    # Should not crash; should return a user-friendly message
     assert isinstance(result, str)
     assert len(result) > 0
+    assert "初始化" in result or "service" in result.lower()
 
 
 @pytest.mark.asyncio
-async def test_save_memory_passes_metadata_to_add_memory() -> None:
+async def test_save_memory_empty_content_returns_error_without_calling_service() -> None:
     svc = _make_memory_service()
-    meta = {"user_id": "u-1", "source": "chat"}
 
     with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
         from baize.agent.tools.memory import save_memory
 
-        await save_memory(content="test content", metadata=meta)
+        result = await save_memory(content="", state=_state(), config=_config())
 
-    svc.add_memory.assert_called_once_with("test content", meta)
+    assert isinstance(result, str)
+    assert len(result) > 0
+    svc.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_save_memory_whitespace_only_content_returns_error() -> None:
+    svc = _make_memory_service()
+
+    with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
+        from baize.agent.tools.memory import save_memory
+
+        result = await save_memory(content="   ", state=_state(), config=_config())
+
+    assert isinstance(result, str)
+    svc.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_save_memory_passes_shared_true_when_state_shared_memory_is_true() -> None:
+    svc = _make_memory_service(add_return="mem-shared")
+
+    with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
+        from baize.agent.tools.memory import save_memory
+
+        await save_memory(content="shared info", state=_state(shared_memory=True), config=_config())
+
+    call_kwargs = svc.add.call_args.kwargs
+    assert call_kwargs["shared"] is True
+
+
+@pytest.mark.asyncio
+async def test_save_memory_passes_shared_false_when_state_shared_memory_is_false() -> None:
+    svc = _make_memory_service(add_return="mem-private")
+
+    with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
+        from baize.agent.tools.memory import save_memory
+
+        await save_memory(content="private info", state=_state(shared_memory=False), config=_config())
+
+    call_kwargs = svc.add.call_args.kwargs
+    assert call_kwargs["shared"] is False
+
+
+@pytest.mark.asyncio
+async def test_save_memory_passes_user_id_agent_id_session_id_to_service() -> None:
+    svc = _make_memory_service(add_return="mem-xyz")
+
+    with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
+        from baize.agent.tools.memory import save_memory
+
+        await save_memory(
+            content="test",
+            state=_state(user_id="u-99", agent_id="a-77"),
+            config=_config(session_id="s-55"),
+        )
+
+    call_kwargs = svc.add.call_args.kwargs
+    assert call_kwargs["user_id"] == "u-99"
+    assert call_kwargs["agent_id"] == "a-77"
+    assert call_kwargs["session_id"] == "s-55"
 
 
 # ---------------------------------------------------------------------------
@@ -176,3 +252,14 @@ def test_memory_tools_have_auto_permission() -> None:
     search_entry = ToolRegistry.get("search_memory")
     assert save_entry is not None and save_entry.permission == "auto"
     assert search_entry is not None and search_entry.permission == "auto"
+
+
+def test_save_memory_description_mentions_purpose() -> None:
+    """save_memory entry description must clearly convey saving to long-term memory."""
+    from baize.agent.tools import ToolRegistry
+    from baize.agent.tools import memory as _  # noqa: F401
+
+    entry = ToolRegistry.get("save_memory")
+    assert entry is not None
+    desc = entry.description
+    assert "记忆" in desc or "memory" in desc.lower()

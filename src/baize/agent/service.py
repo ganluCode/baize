@@ -350,9 +350,20 @@ class AgentService:
         # 2. Load or auto-create session
         session = await self._get_or_create_session(session_id, user_id, agent_id)
 
+        # 2b. Resolve memory configuration (used both for auto-recall and tool injection)
+        from baize.core.config import get_settings
+        from baize.memory.service import resolve_memory_config
+
+        resolved_memory = resolve_memory_config(
+            session=session,
+            agent_config=agent_config,
+            user=user,
+            global_config=get_settings(),
+        )
+
         # 3. Memory recall (if enabled)
         memories: list[Memory] = []
-        if agent_config.auto_memory_recall and self._memory_svc is not None:
+        if resolved_memory.auto_memory_recall and self._memory_svc is not None:
             try:
                 memories = await self._memory_svc.search(message, top_k=5)
             except Exception:
@@ -394,6 +405,7 @@ class AgentService:
                         "messages": initial_messages,
                         "user_id": str(user_id),
                         "agent_id": str(agent_id),
+                        "shared_memory": resolved_memory.shared_memory,
                     },
                     config={"configurable": {"thread_id": str(session.id)}},
                     version="v2",
