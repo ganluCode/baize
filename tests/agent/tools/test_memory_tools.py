@@ -179,18 +179,37 @@ async def test_save_memory_passes_user_id_agent_id_session_id_to_service() -> No
 @pytest.mark.asyncio
 async def test_search_memory_returns_formatted_list_on_success() -> None:
     memories = [
-        Memory(id="m1", content="I love Python", user_id="u-1", metadata={}, created_at=_NOW, updated_at=_NOW),
-        Memory(id="m2", content="FastAPI is great", user_id="u-1", metadata={}, created_at=_NOW, updated_at=_NOW),
+        Memory(id="m1", content="I love Python", user_id="u-1", score=0.95, metadata={}, created_at=_NOW, updated_at=_NOW),
+        Memory(id="m2", content="FastAPI is great", user_id="u-1", score=0.82, metadata={}, created_at=_NOW, updated_at=_NOW),
     ]
     svc = _make_memory_service(search_return=memories)
 
     with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
         from baize.agent.tools.memory import search_memory
 
-        result = await search_memory(query="programming", top_k=5)
+        result = await search_memory(query="programming", state=_state(), top_k=5)
 
     assert "I love Python" in result
     assert "FastAPI is great" in result
+    assert "0.95" in result
+    assert "0.82" in result
+
+
+@pytest.mark.asyncio
+async def test_search_memory_returns_formatted_list_without_score() -> None:
+    """Memories with score=None should omit the score annotation."""
+    memories = [
+        Memory(id="m1", content="No score memory", user_id="u-1", score=None, metadata={}, created_at=_NOW, updated_at=_NOW),
+    ]
+    svc = _make_memory_service(search_return=memories)
+
+    with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
+        from baize.agent.tools.memory import search_memory
+
+        result = await search_memory(query="test", state=_state(), top_k=5)
+
+    assert "No score memory" in result
+    assert "相关性" not in result
 
 
 @pytest.mark.asyncio
@@ -198,7 +217,7 @@ async def test_search_memory_returns_not_initialised_when_service_is_none() -> N
     with patch("baize.agent.tools.memory._get_memory_service", return_value=None):
         from baize.agent.tools.memory import search_memory
 
-        result = await search_memory(query="something", top_k=5)
+        result = await search_memory(query="something", state=_state(), top_k=5)
 
     assert isinstance(result, str)
     assert len(result) > 0
@@ -211,22 +230,26 @@ async def test_search_memory_handles_empty_results() -> None:
     with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
         from baize.agent.tools.memory import search_memory
 
-        result = await search_memory(query="nothing here", top_k=5)
+        result = await search_memory(query="nothing here", state=_state(), top_k=5)
 
     assert isinstance(result, str)
-    assert len(result) > 0
+    assert "未找到" in result
 
 
 @pytest.mark.asyncio
-async def test_search_memory_passes_query_and_top_k_to_service() -> None:
+async def test_search_memory_passes_user_id_agent_id_to_service() -> None:
     svc = _make_memory_service(search_return=[])
 
     with patch("baize.agent.tools.memory._get_memory_service", return_value=svc):
         from baize.agent.tools.memory import search_memory
 
-        await search_memory(query="my query", top_k=3)
+        await search_memory(
+            query="my query",
+            state=_state(user_id="u-42", agent_id="a-77"),
+            top_k=3,
+        )
 
-    svc.search.assert_called_once_with("my query", top_k=3)
+    svc.search.assert_called_once_with("my query", user_id="u-42", agent_id="a-77", top_k=3)
 
 
 # ---------------------------------------------------------------------------

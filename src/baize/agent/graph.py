@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, Sequence
 
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -45,10 +45,21 @@ def _should_continue(state: AgentState) -> str:
     return END
 
 
+def _get_memory_service() -> Any | None:
+    """Return the MemoryService from the global container, or None."""
+    try:
+        from baize.core.deps import get_container
+
+        return get_container().memory_service
+    except RuntimeError:
+        return None
+
+
 def build_react_graph(
     llm: Any,
     tools: list[Any],
     checkpointer: Any | None = None,
+    auto_memory_recall: bool = False,
 ):
     """Build and compile a ReAct Agent graph.
 
@@ -56,6 +67,8 @@ def build_react_graph(
         llm: A LangChain-compatible chat model (must support ``bind_tools``).
         tools: List of LangChain ``BaseTool`` instances to bind.
         checkpointer: Optional LangGraph checkpointer for state persistence.
+        auto_memory_recall: When True, search long-term memory before each LLM
+            call and inject relevant memories into the System Prompt.
 
     Returns:
         A compiled LangGraph ``CompiledGraph`` ready for invocation.
@@ -64,7 +77,33 @@ def build_react_graph(
 
     async def agent_node(state: AgentState) -> dict[str, list[BaseMessage]]:
         """Invoke the LLM with the current message history."""
-        response = await llm_with_tools.ainvoke(state["messages"])
+        messages: list[BaseMessage] = list(state["messages"])
+
+        if auto_memory_recall:
+            svc = _get_memory_service()
+            if svc is not None:
+                user_id: str = state.get("user_id", "")  # type: ignore[assignment]
+                agent_id: str | None = state.get("agent_id")  # type: ignore[assignment]
+                human_msgs = [m for m in messages if isinstance(m, HumanMessage)]
+                if human_msgs:
+                    query = human_msgs[-1].content
+                    try:
+                        memories = await svc.search(
+                            query, user_id=user_id, agent_id=agent_id, top_k=5
+                        )
+                    except Exception:  # noqa: BLE001
+                        memories = []
+                    if memories:
+                        recall_lines = "\n".join(f"- {m.content}" for m in memories)
+                        recall_section = f"\n\n## 记忆参考\n{recall_lines}"
+                        if messages and isinstance(messages[0], SystemMessage):
+                            messages[0] = SystemMessage(
+                                content=messages[0].content + recall_section
+                            )
+                        else:
+                            messages.insert(0, SystemMessage(content=recall_section.strip()))
+
+        response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
     tool_node = ToolNode(tools, handle_tool_errors=True)

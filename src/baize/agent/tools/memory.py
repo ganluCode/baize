@@ -86,28 +86,38 @@ async def save_memory(
         return f"保存记忆失败：{exc}"
 
 
-@register_tool(permission="auto", description="Search long-term memory for relevant information.")
-async def search_memory(query: str, top_k: int = 5) -> str:
-    """Search long-term memory for information relevant to a query.
+@register_tool(permission="auto", description="从长期记忆中搜索与问题相关的信息")
+async def search_memory(
+    query: str,
+    state: Annotated[dict, InjectedState],
+    top_k: int = 5,
+) -> str:
+    """从长期记忆中搜索与查询相关的信息。
 
     Args:
         query: Natural-language search query.
+        state: Injected graph state — provides user_id and agent_id.
+               Not exposed to the Agent in the tool schema.
         top_k: Maximum number of memories to return (default 5).
 
     Returns:
-        Formatted string listing matching memories, or a status message.
+        Formatted string listing matching memories with scores, or a status message.
     """
     svc = _get_memory_service()
     if svc is None:
         return "记忆服务尚未初始化，无法搜索记忆。"
 
-    memories = await svc.search(query, top_k=top_k)
+    user_id: str = state.get("user_id", "")
+    agent_id: str | None = state.get("agent_id")
+
+    memories = await svc.search(query, user_id=user_id, agent_id=agent_id, top_k=top_k)
 
     if not memories:
         return "未找到相关记忆。"
 
     lines = ["## 相关记忆"]
     for i, mem in enumerate(memories, start=1):
-        lines.append(f"{i}. {mem.content}")
+        score_str = f"（相关性：{mem.score:.2f}）" if mem.score is not None else ""
+        lines.append(f"{i}. {mem.content}{score_str}")
 
     return "\n".join(lines)

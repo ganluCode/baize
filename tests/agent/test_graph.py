@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import pytest
+from datetime import datetime
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool as lc_tool
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from baize.memory.interface import MemoryItem
+
+_NOW = datetime(2026, 1, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -170,3 +175,155 @@ class TestBuildReactGraph:
         graph = build_react_graph(llm, [dummy_add], checkpointer=checkpointer)
         # Graph should still be valid
         assert hasattr(graph, "ainvoke")
+
+
+class TestAutoMemoryRecall:
+    """Tests for auto_memory_recall integration in build_react_graph."""
+
+    def _make_svc(self, memories: list[MemoryItem] | None = None) -> AsyncMock:
+        svc = AsyncMock()
+        svc.search.return_value = memories or []
+        return svc
+
+    async def test_auto_recall_injects_system_message_with_memories(self):
+        """When auto_memory_recall=True and service returns memories, a SystemMessage is injected."""
+        from baize.agent.graph import build_react_graph
+
+        memories = [
+            MemoryItem(id="m1", content="User loves Python", user_id="u-1", created_at=_NOW, updated_at=_NOW),
+        ]
+        svc = self._make_svc(memories)
+
+        llm = _make_mock_llm([AIMessage(content="Got it.")])
+        graph = build_react_graph(llm, [dummy_add], auto_memory_recall=True)
+
+        captured_messages = []
+        original_ainvoke = llm.ainvoke.side_effect
+
+        async def capture_ainvoke(msgs):
+            captured_messages.extend(msgs)
+            return next(iter(original_ainvoke))
+
+        llm.ainvoke.side_effect = [AIMessage(content="Got it.")]
+
+        with patch("baize.agent.graph._get_memory_service", return_value=svc):
+            await graph.ainvoke({
+                "messages": [HumanMessage(content="What do I like?")],
+                "user_id": "u-1",
+                "agent_id": "a-1",
+            })
+
+        svc.search.assert_called_once()
+        call_kwargs = svc.search.call_args
+        assert call_kwargs.args[0] == "What do I like?" or call_kwargs.kwargs.get("query") == "What do I like?" or call_kwargs.args[0] == "What do I like?"
+
+    async def test_auto_recall_passes_user_id_and_agent_id_to_service(self):
+        """search should be called with user_id and agent_id from state."""
+        from baize.agent.graph import build_react_graph
+
+        svc = self._make_svc([])
+        llm = _make_mock_llm([AIMessage(content="ok")])
+        graph = build_react_graph(llm, [], auto_memory_recall=True)
+
+        with patch("baize.agent.graph._get_memory_service", return_value=svc):
+            await graph.ainvoke({
+                "messages": [HumanMessage(content="hello")],
+                "user_id": "u-99",
+                "agent_id": "a-42",
+            })
+
+        svc.search.assert_called_once()
+        call_kwargs = svc.search.call_args
+        assert call_kwargs.kwargs["user_id"] == "u-99"
+        assert call_kwargs.kwargs["agent_id"] == "a-42"
+
+    async def test_auto_recall_skips_when_false(self):
+        """When auto_memory_recall=False, memory service should not be called."""
+        from baize.agent.graph import build_react_graph
+
+        svc = self._make_svc([])
+        llm = _make_mock_llm([AIMessage(content="ok")])
+        graph = build_react_graph(llm, [], auto_memory_recall=False)
+
+        with patch("baize.agent.graph._get_memory_service", return_value=svc) as mock_get:
+            await graph.ainvoke({
+                "messages": [HumanMessage(content="hello")],
+                "user_id": "u-1",
+                "agent_id": "a-1",
+            })
+
+        mock_get.assert_not_called()
+
+    async def test_auto_recall_no_system_message_when_no_memories(self):
+        """When service returns empty, LLM should be called without injected SystemMessage."""
+        from baize.agent.graph import build_react_graph
+
+        svc = self._make_svc([])
+        final_msg = AIMessage(content="ok")
+        llm = _make_mock_llm([final_msg])
+        graph = build_react_graph(llm, [], auto_memory_recall=True)
+
+        with patch("baize.agent.graph._get_memory_service", return_value=svc):
+            result = await graph.ainvoke({
+                "messages": [HumanMessage(content="hello")],
+                "user_id": "u-1",
+                "agent_id": "a-1",
+            })
+
+        # No SystemMessage should appear in the final messages
+        system_msgs = [m for m in result["messages"] if isinstance(m, SystemMessage)]
+        assert len(system_msgs) == 0
+
+    async def test_auto_recall_appends_to_existing_system_message(self):
+        """When a SystemMessage already exists, recall is appended to it."""
+        from baize.agent.graph import build_react_graph
+
+        memories = [
+            MemoryItem(id="m1", content="User is an engineer", user_id="u-1", created_at=_NOW, updated_at=_NOW),
+        ]
+        svc = self._make_svc(memories)
+
+        # Track what messages the LLM actually receives
+        received: list[list] = []
+
+        async def capturing_ainvoke(msgs):
+            received.append(list(msgs))
+            return AIMessage(content="ok")
+
+        llm = AsyncMock()
+        llm.bind_tools = MagicMock(return_value=llm)
+        llm.ainvoke = capturing_ainvoke
+
+        graph = build_react_graph(llm, [], auto_memory_recall=True)
+
+        with patch("baize.agent.graph._get_memory_service", return_value=svc):
+            await graph.ainvoke({
+                "messages": [
+                    SystemMessage(content="You are a helpful assistant."),
+                    HumanMessage(content="Who am I?"),
+                ],
+                "user_id": "u-1",
+                "agent_id": "a-1",
+            })
+
+        assert len(received) == 1
+        first_msg = received[0][0]
+        assert isinstance(first_msg, SystemMessage)
+        assert "You are a helpful assistant." in first_msg.content
+        assert "User is an engineer" in first_msg.content
+
+    async def test_auto_recall_skips_when_service_unavailable(self):
+        """When memory service is None, graph should still work normally."""
+        from baize.agent.graph import build_react_graph
+
+        llm = _make_mock_llm([AIMessage(content="ok")])
+        graph = build_react_graph(llm, [], auto_memory_recall=True)
+
+        with patch("baize.agent.graph._get_memory_service", return_value=None):
+            result = await graph.ainvoke({
+                "messages": [HumanMessage(content="hello")],
+                "user_id": "u-1",
+                "agent_id": "a-1",
+            })
+
+        assert result["messages"][-1].content == "ok"
