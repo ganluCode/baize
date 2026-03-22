@@ -16,6 +16,7 @@ from baize.core.container import Container
 from baize.core.database import get_db
 from baize.llm.model_router import ModelRouter
 from baize.llm.provider import ProviderFactory
+from baize.memory.interface import MemoryServiceInterface
 from baize.session.repository import ChatMessageRepository, SessionRepository
 from baize.session.service import SessionService
 
@@ -48,11 +49,10 @@ def get_container() -> Container:
 # ---------------------------------------------------------------------------
 
 
-def get_memory_service(container: Container = Depends(get_container)) -> Any:
-    """Dependency factory for MemoryService.
-
-    TODO: Return typed MemoryService once the memory feature is implemented.
-    """
+def get_memory_service(
+    container: Container = Depends(get_container),
+) -> MemoryServiceInterface | None:
+    """Dependency factory for MemoryServiceInterface (Mem0Adapter when configured)."""
     return container.memory_service
 
 
@@ -109,7 +109,7 @@ def get_model_router(container: Container = Depends(get_container)) -> ModelRout
 def get_agent_service(
     db: AsyncSession = Depends(get_db),
     model_router: ModelRouter = Depends(get_model_router),
-    memory_service: Any = Depends(get_memory_service),
+    memory_service: MemoryServiceInterface | None = Depends(get_memory_service),
 ) -> AgentService:
     """Dependency factory for AgentService — builds a per-request instance."""
     agent_repo = AgentConfigRepository(db)
