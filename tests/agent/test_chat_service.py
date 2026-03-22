@@ -219,7 +219,8 @@ async def test_chat_recalls_memory_when_auto_memory_recall_enabled() -> None:
     session_svc.save_message = AsyncMock(return_value=MagicMock(id=uuid.uuid4()))
 
     memory_svc = AsyncMock(spec=MemoryServiceInterface)
-    memory_svc.search.return_value = [Memory(id="1", content="Test memory")]
+    _now = datetime(2026, 1, 1, 0, 0, 0)
+    memory_svc.search.return_value = [Memory(id="1", content="Test memory", user_id="u-1", created_at=_now, updated_at=_now)]
 
     mock_graph = MagicMock()
     mock_graph.astream_events = _make_simple_stream(

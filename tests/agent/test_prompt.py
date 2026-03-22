@@ -10,11 +10,14 @@ Tests cover:
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from baize.memory.interface import Memory
+
+_NOW = datetime(2026, 1, 1, 0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +40,7 @@ def _make_user(name: str = "Alice", preferences: dict | None = None) -> MagicMoc
 
 
 def _make_memories(contents: list[str]) -> list[Memory]:
-    return [Memory(id=str(i), content=c) for i, c in enumerate(contents)]
+    return [Memory(id=str(i), content=c, user_id="u-1", created_at=_NOW, updated_at=_NOW) for i, c in enumerate(contents)]
 
 
 # ---------------------------------------------------------------------------

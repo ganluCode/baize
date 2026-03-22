@@ -11,11 +11,14 @@ Tests cover:
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from baize.memory.interface import Memory
+
+_NOW = datetime(2026, 1, 1, 0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +103,8 @@ async def test_save_memory_passes_metadata_to_add_memory() -> None:
 @pytest.mark.asyncio
 async def test_search_memory_returns_formatted_list_on_success() -> None:
     memories = [
-        Memory(id="m1", content="I love Python", metadata={}),
-        Memory(id="m2", content="FastAPI is great", metadata={}),
+        Memory(id="m1", content="I love Python", user_id="u-1", metadata={}, created_at=_NOW, updated_at=_NOW),
+        Memory(id="m2", content="FastAPI is great", user_id="u-1", metadata={}, created_at=_NOW, updated_at=_NOW),
     ]
     svc = _make_memory_service(search_return=memories)
 
