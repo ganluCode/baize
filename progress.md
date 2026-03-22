@@ -82,3 +82,29 @@ All acceptance criteria are met:
 
 The previous rework block reason was "Agent did not report passes: true" — `task_list.json`
 already had `passes: true`. No code changes needed.
+
+## F-009: POST /api/v1/chat streaming SSE endpoint
+
+**Status**: PASSED
+
+Implemented the `/api/v1/chat` streaming SSE endpoint with full pre-validation.
+
+### Changes
+
+- **`src/baize/agent/chat_router.py`**: Implemented `POST /api/v1/chat` with:
+  - `ChatStreamRequest` schema (message, optional agent_id, optional session_id)
+  - `_get_user_model` dependency wrapping `auth.deps.get_current_user` to load UserModel
+  - `_safe_chat_stream` async generator wrapping AgentService errors as SSE error events
+  - Pre-validation: empty message → 400, no default agent → 404, session not owned → 403
+- **`src/baize/agent/service.py`**: Added `AgentConfigService.get_default(user_id)` method
+- **`tests/agent/test_chat_stream.py`**: 12 tests covering all acceptance criteria
+
+### Key design decisions
+
+- Uses `auth.deps.get_current_user` (rejects Service Key with 403)
+- Pre-validation errors return HTTP status codes (400/403/404), runtime agent errors emit SSE error events
+- `_get_user_model` loads full UserModel from DB using auth user_id string
+- Session auto-creation: generates a new UUID when session_id is null, AgentService handles creation
+
+**Tests**: 571/571 pass
+**Regressions**: None

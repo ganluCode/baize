@@ -213,6 +213,17 @@ class AgentConfigService:
         )
         return await self.create(user_id, data)
 
+    async def get_default(self, user_id: uuid.UUID) -> AgentConfig | None:
+        """Return the default agent config for a user, or None if not found.
+
+        Args:
+            user_id: The user whose default agent to look up.
+
+        Returns:
+            The default AgentConfig, or None.
+        """
+        return await self._repo.get_default_by_user(user_id)
+
     async def delete(self, agent_id: uuid.UUID, user_id: uuid.UUID) -> None:
         """Delete an agent configuration and cascade-delete its sessions.
 
