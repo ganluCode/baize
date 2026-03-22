@@ -44,20 +44,20 @@ def upgrade() -> None:
         sa.Column("content", sa.Text(), nullable=True),
         sa.Column(
             "priority",
-            sa.Enum("low", "medium", "high", name="task_priority"),
+            sa.Enum("low", "medium", "high", name="task_priority", create_type=False),
             nullable=False,
             server_default="medium",
         ),
         sa.Column(
             "status",
-            sa.Enum("todo", "in_progress", "done", name="task_status"),
+            sa.Enum("todo", "in_progress", "done", name="task_status", create_type=False),
             nullable=False,
             server_default="todo",
         ),
         sa.Column("due_date", sa.Date(), nullable=True),
         sa.Column(
             "source",
-            sa.Enum("manual", "agent", name="task_source"),
+            sa.Enum("manual", "agent", name="task_source", create_type=False),
             nullable=False,
             server_default="manual",
         ),
