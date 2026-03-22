@@ -20,6 +20,7 @@ dependencies = [
     "jinja2>=3.1.0",
     "tiktoken>=0.7.0",
     "langgraph>=1.1.0",
+    "sse-starlette>=3.3.3",
 ]
 
 [project.optional-dependencies]
