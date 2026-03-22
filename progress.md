@@ -1,5 +1,17 @@
 # Progress
 
+## F-017: API Integration Tests (rework attempt 2)
+
+**Status**: PASSED
+
+Implementation was already complete. All 19 integration tests pass:
+- `test_agent_api.py`: Agent CRUD (POST 201, GET list, PUT update, DELETE 204, 404 for other user's agents)
+- `test_chat_api.py`: SSE chat endpoint (text/event-stream, token+done events, 401 for invalid API key)
+- `test_default_agent.py`: New user gets default agent with is_default=True and non-empty system_prompt
+
+**Tests**: 402/402 tests pass across full suite
+**Regression**: No regressions
+
 ## F-015: Default Agent Prompt + Auto-Init (rework attempt 3)
 
 **Status**: PASSED
