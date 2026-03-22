@@ -21,14 +21,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Create enum types
-    task_priority = postgresql.ENUM("low", "medium", "high", name="task_priority", create_type=False)
-    task_status = postgresql.ENUM("todo", "in_progress", "done", name="task_status", create_type=False)
-    task_source = postgresql.ENUM("manual", "agent", name="task_source", create_type=False)
-
-    task_priority.create(op.get_bind(), checkfirst=True)
-    task_status.create(op.get_bind(), checkfirst=True)
-    task_source.create(op.get_bind(), checkfirst=True)
+    # Create enum types (IF NOT EXISTS avoids errors on re-run with asyncpg)
+    op.execute("CREATE TYPE IF NOT EXISTS task_priority AS ENUM ('low', 'medium', 'high')")
+    op.execute("CREATE TYPE IF NOT EXISTS task_status AS ENUM ('todo', 'in_progress', 'done')")
+    op.execute("CREATE TYPE IF NOT EXISTS task_source AS ENUM ('manual', 'agent')")
 
     op.create_table(
         "tasks",

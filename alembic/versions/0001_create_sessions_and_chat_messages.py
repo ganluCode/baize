@@ -30,8 +30,8 @@ def upgrade() -> None:
     )
 
     # Create enum types explicitly before creating the tables.
-    op.execute("CREATE TYPE session_status AS ENUM ('active', 'archived')")
-    op.execute("CREATE TYPE message_role AS ENUM ('user', 'assistant', 'system', 'tool')")
+    op.execute("CREATE TYPE IF NOT EXISTS session_status AS ENUM ('active', 'archived')")
+    op.execute("CREATE TYPE IF NOT EXISTS message_role AS ENUM ('user', 'assistant', 'system', 'tool')")
 
     op.create_table(
         "sessions",
