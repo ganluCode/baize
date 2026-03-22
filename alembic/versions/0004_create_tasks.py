@@ -77,8 +77,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_tasks_user_due_date", table_name="tasks")
-    op.drop_index("idx_tasks_user_status_created", table_name="tasks")
+    op.drop_index("idx_tasks_user_due_date", table_name="tasks", if_exists=True)
+    op.drop_index("idx_tasks_user_status_created", table_name="tasks", if_exists=True)
     op.drop_table("tasks")
 
     op.execute("DROP TYPE IF EXISTS task_source")
