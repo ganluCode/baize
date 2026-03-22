@@ -10,6 +10,8 @@ from typing import Any
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from baize.agent.repository import AgentConfigRepository
+from baize.agent.service import AgentConfigService
 from baize.core.container import Container
 from baize.core.database import get_db
 from baize.llm.model_router import ModelRouter
@@ -83,6 +85,15 @@ def get_agent_service(container: Container = Depends(get_container)) -> Any:
     TODO: Return typed AgentService once the agent feature is implemented.
     """
     return container.agent_service
+
+
+def get_agent_config_service(db: AsyncSession = Depends(get_db)) -> AgentConfigService:
+    """Dependency factory for AgentConfigService — builds a per-request instance."""
+    agent_repo = AgentConfigRepository(db)
+    session_repo = SessionRepository(db)
+    message_repo = ChatMessageRepository(db)
+    session_svc = SessionService(session_repo=session_repo, message_repo=message_repo)
+    return AgentConfigService(repository=agent_repo, session_service=session_svc)
 
 
 def get_task_service(container: Container = Depends(get_container)) -> Any:

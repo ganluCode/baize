@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from baize.core.config import Settings
 from baize.core.container import Container
 from baize.core.deps import set_container
+from baize.agent.router import router as agent_router
 from baize.llm.router import router as llm_router
 from baize.session.router import router as session_router
 from baize.session.router import session_router as session_detail_router
@@ -47,6 +48,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
+app.include_router(agent_router, prefix="/api/v1")
 app.include_router(session_router, prefix="/api/v1")
 app.include_router(session_detail_router, prefix="/api/v1")
 
