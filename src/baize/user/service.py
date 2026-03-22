@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import bcrypt
 
@@ -17,6 +18,9 @@ from baize.user.schemas import (
     UserResponse,
     UserUpdateRequest,
 )
+
+if TYPE_CHECKING:
+    from baize.agent.service import AgentConfigService
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +44,13 @@ def _hash_for_lookup(plaintext_key: str) -> str:
 class UserService:
     """Handles user profile retrieval, update, creation, and API key management."""
 
-    def __init__(self, user_repo: UserRepository) -> None:
+    def __init__(
+        self,
+        user_repo: UserRepository,
+        agent_config_service: "AgentConfigService | None" = None,
+    ) -> None:
         self._repo = user_repo
+        self._agent_config_service = agent_config_service
 
     async def get_me(self, user: UserModel) -> UserResponse:
         """Return the public profile of the given user.
@@ -117,6 +126,15 @@ class UserService:
         }
         user = await self._repo.create(user_data)
         logger.info("Created user %s (role=%s).", user.id, user.role)
+
+        if self._agent_config_service is not None:
+            try:
+                await self._agent_config_service.create_default_agent(user.id)
+                logger.debug("Created default agent for user %s.", user.id)
+            except Exception:
+                logger.exception(
+                    "Failed to create default agent for user %s; continuing.", user.id
+                )
 
         base = UserResponse.model_validate(user).model_dump()
         return UserCreateResponse(**base, api_key=plaintext_key)

@@ -11,6 +11,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
+from baize.agent.service import AgentConfigService  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 from baize.user.schemas import UserCreateRequest, UserUpdateRequest  # noqa: E402
 from baize.user.service import UserService, UserServiceError  # noqa: E402
@@ -243,3 +244,56 @@ async def test_reset_api_key_user_not_found_raises_404(svc, repo):
         await svc.reset_api_key(uuid.uuid4())
 
     assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# create_user — default agent integration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_user_calls_create_default_agent_when_service_provided(repo):
+    """create_user() triggers create_default_agent when agent_config_service is set."""
+    created_user = _make_user(email="u@example.com", name="uname")
+    repo.create.return_value = created_user
+
+    agent_svc = AsyncMock(spec=AgentConfigService)
+    svc = UserService(user_repo=repo, agent_config_service=agent_svc)
+
+    req = UserCreateRequest(email="u@example.com", name="uname", password="pw")
+    await svc.create_user(req)
+
+    agent_svc.create_default_agent.assert_awaited_once_with(created_user.id)
+
+
+@pytest.mark.asyncio
+async def test_create_user_does_not_call_create_default_agent_when_service_absent(repo):
+    """create_user() skips default agent creation when no agent_config_service."""
+    created_user = _make_user(email="u@example.com", name="uname")
+    repo.create.return_value = created_user
+
+    svc = UserService(user_repo=repo)  # no agent_config_service
+
+    req = UserCreateRequest(email="u@example.com", name="uname", password="pw")
+    # Should complete without error
+    result = await svc.create_user(req)
+
+    assert result.email == "u@example.com"
+
+
+@pytest.mark.asyncio
+async def test_create_user_continues_when_create_default_agent_fails(repo):
+    """create_user() does not raise if create_default_agent raises an exception."""
+    created_user = _make_user(email="u@example.com", name="uname")
+    repo.create.return_value = created_user
+
+    agent_svc = AsyncMock(spec=AgentConfigService)
+    agent_svc.create_default_agent.side_effect = RuntimeError("DB error")
+
+    svc = UserService(user_repo=repo, agent_config_service=agent_svc)
+
+    req = UserCreateRequest(email="u@example.com", name="uname", password="pw")
+    result = await svc.create_user(req)
+
+    # User creation should still succeed
+    assert result.email == "u@example.com"

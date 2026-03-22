@@ -2,12 +2,25 @@
 
 import logging
 import uuid
+from pathlib import Path
 
 from baize.agent.models import AgentConfig
 from baize.agent.repository import AgentConfigRepository
 from baize.agent.schemas import AgentCreate, AgentResponse, AgentUpdate
 from baize.agent.tools import ToolRegistry
 from baize.session.service import SessionService
+
+_DEFAULT_AGENT_PROMPT_PATH = (
+    Path(__file__).parents[3] / "config" / "prompts" / "default_agent.md"
+)
+
+_DEFAULT_AGENT_TOOLS = [
+    "save_memory",
+    "search_memory",
+    "create_task",
+    "list_tasks",
+    "complete_task",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +162,36 @@ class AgentConfigService:
 
         logger.debug("Updated agent %s.", agent_id)
         return updated
+
+    async def create_default_agent(self, user_id: uuid.UUID) -> AgentConfig:
+        """Create the default 白泽（Baize）agent for a newly created user.
+
+        Reads the system prompt from ``config/prompts/default_agent.md`` and
+        creates an agent with the standard tool set and ``is_default=True``.
+
+        Args:
+            user_id: The user who will own the default agent.
+
+        Returns:
+            The newly created default AgentConfig.
+        """
+        try:
+            system_prompt = _DEFAULT_AGENT_PROMPT_PATH.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning(
+                "Default agent prompt not found at %s; using empty prompt.",
+                _DEFAULT_AGENT_PROMPT_PATH,
+            )
+            system_prompt = ""
+
+        data = AgentCreate(
+            name="白泽（Baize）",
+            description="你的个人 AI 助理",
+            system_prompt=system_prompt,
+            tools=_DEFAULT_AGENT_TOOLS,
+            is_default=True,
+        )
+        return await self.create(user_id, data)
 
     async def delete(self, agent_id: uuid.UUID, user_id: uuid.UUID) -> None:
         """Delete an agent configuration and cascade-delete its sessions.

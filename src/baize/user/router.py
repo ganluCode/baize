@@ -6,7 +6,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from baize.agent.repository import AgentConfigRepository
+from baize.agent.service import AgentConfigService
 from baize.core.database import get_db
+from baize.session.repository import ChatMessageRepository, SessionRepository
+from baize.session.service import SessionService
 from baize.user.deps import get_current_user, require_admin
 from baize.user.models import UserModel
 from baize.user.repository import UserRepository
@@ -28,7 +32,12 @@ router = APIRouter(prefix="/users", tags=["users"])
 async def _get_user_service(session: AsyncSession = Depends(get_db)) -> UserService:
     """Build a per-request UserService from a DB session."""
     repo = UserRepository(session)
-    return UserService(user_repo=repo)
+    agent_repo = AgentConfigRepository(session)
+    session_repo = SessionRepository(session)
+    message_repo = ChatMessageRepository(session)
+    session_svc = SessionService(session_repo=session_repo, message_repo=message_repo)
+    agent_svc = AgentConfigService(repository=agent_repo, session_service=session_svc)
+    return UserService(user_repo=repo, agent_config_service=agent_svc)
 
 
 @router.get("/me", response_model=UserResponse)

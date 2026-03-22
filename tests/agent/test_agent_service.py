@@ -290,3 +290,127 @@ async def test_delete_raises_404_when_agent_not_found() -> None:
         await svc.delete(uuid.uuid4(), uuid.uuid4())
 
     repo.delete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# create_default_agent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_default_agent_uses_default_tools() -> None:
+    """create_default_agent() creates an agent with the standard tool set."""
+    user_id = uuid.uuid4()
+    agent = _make_agent(user_id=user_id, is_default=True)
+
+    repo = AsyncMock(spec=AgentConfigRepository)
+    repo.create.return_value = agent
+    svc = _make_service(repo=repo)
+
+    all_default_tools = [
+        "save_memory",
+        "search_memory",
+        "create_task",
+        "list_tasks",
+        "complete_task",
+    ]
+
+    with patch.object(ToolRegistry, "get_all_names", return_value=all_default_tools):
+        result = await svc.create_default_agent(user_id)
+
+    repo.create.assert_called_once()
+    call_data = repo.create.call_args[0][1]  # second positional arg is AgentCreate
+    assert set(call_data.tools) == set(all_default_tools)
+    assert call_data.is_default is True
+    assert result is agent
+
+
+@pytest.mark.asyncio
+async def test_create_default_agent_is_default_true() -> None:
+    """create_default_agent() always creates an agent with is_default=True."""
+    user_id = uuid.uuid4()
+    agent = _make_agent(user_id=user_id, is_default=True)
+
+    repo = AsyncMock(spec=AgentConfigRepository)
+    repo.create.return_value = agent
+    svc = _make_service(repo=repo)
+
+    all_default_tools = [
+        "save_memory",
+        "search_memory",
+        "create_task",
+        "list_tasks",
+        "complete_task",
+    ]
+
+    with patch.object(ToolRegistry, "get_all_names", return_value=all_default_tools):
+        result = await svc.create_default_agent(user_id)
+
+    repo.set_default.assert_called_once_with(user_id, agent.id)
+    assert result.is_default is True
+
+
+@pytest.mark.asyncio
+async def test_create_default_agent_reads_prompt_file(tmp_path) -> None:
+    """create_default_agent() reads system_prompt from default_agent.md."""
+    user_id = uuid.uuid4()
+    agent = _make_agent(user_id=user_id, is_default=True)
+
+    repo = AsyncMock(spec=AgentConfigRepository)
+    repo.create.return_value = agent
+    svc = _make_service(repo=repo)
+
+    custom_prompt = "Custom prompt with {{ user_name }} and {{ current_date }}"
+    prompt_file = tmp_path / "default_agent.md"
+    prompt_file.write_text(custom_prompt)
+
+    all_default_tools = [
+        "save_memory",
+        "search_memory",
+        "create_task",
+        "list_tasks",
+        "complete_task",
+    ]
+
+    import baize.agent.service as svc_module
+
+    with (
+        patch.object(ToolRegistry, "get_all_names", return_value=all_default_tools),
+        patch.object(svc_module, "_DEFAULT_AGENT_PROMPT_PATH", prompt_file),
+    ):
+        await svc.create_default_agent(user_id)
+
+    call_data = repo.create.call_args[0][1]
+    assert call_data.system_prompt == custom_prompt
+
+
+@pytest.mark.asyncio
+async def test_create_default_agent_falls_back_on_missing_prompt_file(tmp_path) -> None:
+    """create_default_agent() uses empty prompt if the template file is missing."""
+    user_id = uuid.uuid4()
+    agent = _make_agent(user_id=user_id, is_default=True)
+
+    repo = AsyncMock(spec=AgentConfigRepository)
+    repo.create.return_value = agent
+    svc = _make_service(repo=repo)
+
+    missing_path = tmp_path / "nonexistent.md"
+
+    all_default_tools = [
+        "save_memory",
+        "search_memory",
+        "create_task",
+        "list_tasks",
+        "complete_task",
+    ]
+
+    import baize.agent.service as svc_module
+
+    with (
+        patch.object(ToolRegistry, "get_all_names", return_value=all_default_tools),
+        patch.object(svc_module, "_DEFAULT_AGENT_PROMPT_PATH", missing_path),
+    ):
+        await svc.create_default_agent(user_id)
+
+    call_data = repo.create.call_args[0][1]
+    assert call_data.system_prompt == ""
