@@ -1,5 +1,38 @@
 # Progress
 
+## P1F8: 清单模块 (Task Module) — F-001 through F-011
+
+**Status**: ALL PASSED
+
+Implemented the complete task module in a single pass. 481/481 tests pass.
+
+### What was implemented
+
+| Task | Description | Status |
+|------|-------------|--------|
+| F-001 | Task ORM model (TaskPriority/TaskStatus/TaskSource enums, composite indexes) | ✅ |
+| F-002 | Alembic migration 0004_create_tasks | ✅ |
+| F-003 | Pydantic schemas (TaskCreate, TaskUpdate, TaskResponse, TaskListResponse, TaskListQuery) | ✅ |
+| F-004 | TaskRepository (CRUD, pagination, due_date NULLS LAST sorting, ILIKE title search) | ✅ |
+| F-005 | TaskService (HTTP per-request) + TaskEngineService (agent tool singleton) | ✅ |
+| F-006 | 5 REST endpoints; registered in main.py | ✅ |
+| F-007 | create_task tool — InjectedState user_id, source=agent | ✅ |
+| F-008 | list_tasks tool — status='all' disables filter, formatted output | ✅ |
+| F-009 | complete_task tool — task_title fuzzy ILIKE match, candidate list on ambiguity | ✅ |
+| F-010 | TaskService unit tests (source enforcement, completed_at transitions, 404/403, isolation) | ✅ |
+| F-011 | Task API integration tests against real baize_test DB | ✅ |
+
+### Key design decisions
+
+- `TaskService` (HTTP): per-request, constructor takes `TaskRepository`
+- `TaskEngineService` (agent tools): singleton in container, creates sessions per-call from engine
+- Agent tools use `InjectedState` for user_id (matching memory tools pattern)
+- `complete_task` tool accepts `task_title` (not task_id) with fuzzy ILIKE matching
+- Updated `tests/agent/tools/test_task_tools.py` to match new tool interface
+
+**Tests**: 481/481 pass
+**Regressions**: None
+
 ## F-017: API Integration Tests (rework attempt 2)
 
 **Status**: PASSED
