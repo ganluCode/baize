@@ -29,7 +29,12 @@ migrate-gen:
 	alembic revision --autogenerate -m "$(msg)"
 
 export-openapi:
-	python -c "import json; from baize.main import app; print(json.dumps(app.openapi(), indent=2))" > openapi.json
+	mkdir -p docs
+	DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/db \
+	REDIS_URL=redis://localhost:6379/0 \
+	ADMIN_API_KEY=dummy \
+	SECRET_KEY=dummy \
+	uv run python -c "import json; from baize.main import app; open('docs/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
 
 docker-up:
 	docker compose -f docker/docker-compose.yml up -d

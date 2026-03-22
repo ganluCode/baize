@@ -209,6 +209,9 @@ __marimo__/
 # Project-specific
 config/config.yaml
 
+# Generated files
+docs/openapi.json
+
 # IDE
 .idea/
 .vscode/
