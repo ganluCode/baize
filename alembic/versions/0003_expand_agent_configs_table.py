@@ -23,14 +23,6 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     # Add FK constraint and all missing columns to the existing agent_configs stub table.
     op.add_column("agent_configs", sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False))
-    op.create_foreign_key(
-        "fk_agent_configs_user_id",
-        "agent_configs",
-        "system_users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
     op.add_column("agent_configs", sa.Column("name", sa.String(100), nullable=False))
     op.add_column("agent_configs", sa.Column("description", sa.String(500), nullable=True))
     op.add_column("agent_configs", sa.Column("system_prompt", sa.Text(), nullable=False))

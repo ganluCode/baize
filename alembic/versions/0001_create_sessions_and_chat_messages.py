@@ -45,7 +45,7 @@ def upgrade() -> None:
         "sessions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("agent_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("agent_configs.id"), nullable=False),
+        sa.Column("agent_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("title", sa.String(200), nullable=True),
         sa.Column("auto_memory_recall", sa.Boolean(), nullable=True),
         sa.Column("shared_memory", sa.Boolean(), nullable=True),
@@ -58,7 +58,7 @@ def upgrade() -> None:
     op.create_table(
         "chat_messages",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("session_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("session_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("role", PGEnum(name="message_role", create_type=False), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("tool_calls", postgresql.JSONB(), nullable=True),
