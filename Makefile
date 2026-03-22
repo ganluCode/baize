@@ -23,10 +23,10 @@ check:
 	ruff format --check src tests
 
 migrate:
-	alembic upgrade head
+	uv run alembic upgrade head
 
 migrate-gen:
-	alembic revision --autogenerate -m "$(msg)"
+	uv run alembic revision --autogenerate -m "$(msg)"
 
 export-openapi:
 	mkdir -p docs
