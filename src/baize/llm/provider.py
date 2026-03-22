@@ -176,6 +176,22 @@ class ProviderFactory:
             )
         return result
 
+    def get_provider_info(self, provider_name: str) -> tuple[str, str]:
+        """Return (base_url, api_key) for a configured provider.
+
+        Args:
+            provider_name: Name of the provider as defined in configuration.
+
+        Returns:
+            Tuple of (base_url, resolved_api_key).
+
+        Raises:
+            ProviderNotFoundError: Provider name not in config.
+            ProviderUnavailableError: Provider's API key env var was missing at startup.
+        """
+        provider = self._check_provider(provider_name)
+        return provider.base_url, self._api_keys[provider_name]
+
     def get_embedding_model(self, provider_name: str, model_id: str) -> OpenAIEmbeddings:
         """Return a cached embedding model instance.
 

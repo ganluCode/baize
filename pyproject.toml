@@ -21,6 +21,7 @@ dependencies = [
     "tiktoken>=0.7.0",
     "langgraph>=1.1.0",
     "sse-starlette>=3.3.3",
+    "mem0ai>=0.1.0",
 ]
 
 [project.optional-dependencies]
