@@ -1,7 +1,7 @@
 """Tests for ChatMessageRepository — covers write and query operations."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,7 +25,7 @@ def _make_message(
     msg.tool_calls = None
     msg.tool_name = None
     msg.token_usage = None
-    msg.created_at = created_at or datetime.now(timezone.utc)
+    msg.created_at = created_at or datetime.now(UTC)
     return msg
 
 
@@ -143,7 +143,7 @@ async def test_list_by_session_empty(repo: ChatMessageRepository, db_session: As
 async def test_get_recent_returns_list(repo: ChatMessageRepository, db_session: AsyncMock) -> None:
     """get_recent returns a list of ChatMessageModel."""
     session_id = uuid.uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     msg1 = _make_message(session_id=session_id, created_at=now - timedelta(seconds=10))
     msg2 = _make_message(session_id=session_id, created_at=now)
 
@@ -162,7 +162,7 @@ async def test_get_recent_returns_list(repo: ChatMessageRepository, db_session: 
 async def test_get_recent_ascending_order(repo: ChatMessageRepository, db_session: AsyncMock) -> None:
     """get_recent returns messages in ascending created_at order."""
     session_id = uuid.uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     older = _make_message(session_id=session_id, created_at=now - timedelta(minutes=5))
     newer = _make_message(session_id=session_id, created_at=now)
 

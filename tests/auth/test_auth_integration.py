@@ -9,7 +9,7 @@ Uses httpx AsyncClient against the real FastAPI app with mocked infrastructure
 import hashlib
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,7 +33,7 @@ from baize.user.schemas import UserResponse  # noqa: E402
 # ---------------------------------------------------------------------------
 
 _USER_ID = str(uuid.uuid4())
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _TEST_SERVICE_KEY = "test-integration-service-key-001"
 
 # ---------------------------------------------------------------------------

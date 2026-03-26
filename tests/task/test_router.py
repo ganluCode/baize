@@ -6,18 +6,19 @@ and each test function gets its own engine + clean tables.
 """
 
 from dotenv import load_dotenv
-load_dotenv()
-import asyncio
-import hashlib
-import os
-import uuid
-from unittest.mock import MagicMock
 
-import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+load_dotenv()
+import asyncio  # noqa: E402
+import hashlib  # noqa: E402
+import os  # noqa: E402
+import uuid  # noqa: E402
+from unittest.mock import MagicMock  # noqa: E402
+
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 
 # Set env vars before any baize import
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/test")
@@ -25,10 +26,10 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
-from baize.main import app as _app  # noqa: E402
+import baize.task.models  # noqa: E402, F401 — registers Task in Base.metadata
 from baize.core.database import get_db  # noqa: E402
 from baize.core.deps import get_container  # noqa: E402
-import baize.task.models  # noqa: F401 — registers Task in Base.metadata
+from baize.main import app as _app  # noqa: E402
 from baize.user.models import Base, UserModel  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -193,8 +194,8 @@ async def test_unauthenticated_request_returns_401(db, api_client):
 
 async def test_list_tasks_api_returns_only_current_user_tasks(db, api_client):
     """GET /api/v1/tasks returns only the authenticated user's tasks."""
-    user1 = await _create_user(db, "key-list-001", name="listuser1")
-    user2 = await _create_user(db, "key-list-002", name="listuser2")
+    await _create_user(db, "key-list-001", name="listuser1")
+    await _create_user(db, "key-list-002", name="listuser2")
 
     # Create task for user1 via API
     await api_client.post(

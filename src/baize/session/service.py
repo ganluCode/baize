@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -58,7 +58,7 @@ class SessionService:
             tool_name=tool_name,
             token_usage=token_usage,
         )
-        await self._session_repo.update(session_id, updated_at=datetime.now(timezone.utc))
+        await self._session_repo.update(session_id, updated_at=datetime.now(UTC))
         logger.debug("Saved message %s for session %s.", msg.id, session_id)
         return msg
 

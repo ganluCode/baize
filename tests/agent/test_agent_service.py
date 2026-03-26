@@ -1,8 +1,8 @@
 """Unit tests for AgentConfigService — covers business rules and constraint enforcement."""
 
 import uuid
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,7 +12,6 @@ from baize.agent.schemas import AgentCreate, AgentUpdate
 from baize.agent.service import AgentConfigService, AgentServiceError
 from baize.agent.tools import ToolRegistry
 from baize.session.service import SessionService
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,8 +34,8 @@ def _make_agent(
     a.auto_memory_recall = None
     a.shared_memory = None
     a.is_default = is_default
-    a.created_at = datetime.now(timezone.utc)
-    a.updated_at = datetime.now(timezone.utc)
+    a.created_at = datetime.now(UTC)
+    a.updated_at = datetime.now(UTC)
     return a
 
 

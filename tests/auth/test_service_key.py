@@ -1,9 +1,8 @@
 """Unit tests for Service Key authenticator (F-004)."""
 
-import pytest
 
-from baize.auth.service_key import authenticate_service_key
 from baize.auth.schemas import AuthResult
+from baize.auth.service_key import authenticate_service_key
 
 
 class TestAuthenticateServiceKey:

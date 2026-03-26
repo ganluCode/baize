@@ -30,7 +30,6 @@ from baize.core.deps import (  # noqa: E402
     get_agent_service,
     get_session_service,
 )
-from baize.main import app  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
 _SYNC_URL = "/api/v1/chat/sync"

@@ -1,6 +1,6 @@
 """Unit tests for baize.core.observability.create_langfuse_handler()."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from baize.core.observability import create_langfuse_handler
 

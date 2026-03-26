@@ -2,12 +2,9 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from baize.llm.model_router import ModelRouter
 from baize.llm.provider import ProviderFactory
 from baize.llm.schemas import AgentConfig, AgentModelConfig, LLMSettings, ModelConfig, ProviderConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,6 +1,5 @@
 """Tests for AgentConfig ORM model structure and constraints."""
 
-import pytest
 from sqlalchemy import Boolean, DateTime, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 

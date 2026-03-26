@@ -14,7 +14,6 @@ import pytest
 
 from baize.agent.tools import ToolEntry, _ToolRegistry, register_tool
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -168,7 +167,6 @@ def test_register_tool_decorator_registers_async_function() -> None:
 def test_register_tool_decorator_on_singleton_creates_langchain_tool(monkeypatch) -> None:
     """Applying @register_tool to a new function registers it on the singleton registry
     and stores a non-None langchain_tool."""
-    from baize.agent.tools import ToolRegistry
 
     # Temporarily replace the registry with a fresh one so the test is isolated.
     fresh_reg = _fresh_registry()
@@ -189,7 +187,6 @@ def test_register_tool_decorator_on_singleton_creates_langchain_tool(monkeypatch
 
 def test_register_tool_uses_docstring_as_description_when_none_given(monkeypatch) -> None:
     """When description is not supplied, the function docstring is used."""
-    from baize.agent.tools import ToolRegistry
 
     fresh_reg = _fresh_registry()
     monkeypatch.setattr("baize.agent.tools.ToolRegistry", fresh_reg)

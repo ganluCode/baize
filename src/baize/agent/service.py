@@ -6,9 +6,10 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import HTTPException
@@ -19,7 +20,7 @@ from baize.agent.graph import build_react_graph
 from baize.agent.models import AgentConfig
 from baize.agent.prompt import assemble_system_prompt
 from baize.agent.repository import AgentConfigRepository
-from baize.agent.schemas import AgentCreate, AgentResponse, AgentUpdate
+from baize.agent.schemas import AgentCreate, AgentUpdate
 from baize.agent.tools import ToolRegistry
 from baize.session.models import MessageRole
 from baize.session.service import SessionService
@@ -168,7 +169,7 @@ class AgentConfigService:
             AgentServiceError: 404 if not found or not owned by user.
             AgentServiceError: 400 if any new tool name is not registered.
         """
-        agent = await self.get(agent_id, user_id)
+        await self.get(agent_id, user_id)
 
         if data.tools is not None:
             self._validate_tools(data.tools)
@@ -275,7 +276,6 @@ _CHAT_TIMEOUT: float = 120.0
 
 def _history_to_lc_messages(messages):
     """Convert a list of ChatMessageModel to LangChain BaseMessage objects."""
-    from baize.session.models import ChatMessageModel
 
     result = []
     for msg in messages:
@@ -303,8 +303,8 @@ class AgentService:
         self,
         agent_config_service: AgentConfigService,
         session_service: SessionService,
-        memory_service: "MemoryServiceInterface | None",
-        model_router: "ModelRouter",
+        memory_service: MemoryServiceInterface | None,
+        model_router: ModelRouter,
     ) -> None:
         self._agent_config_svc = agent_config_service
         self._session_svc = session_service
@@ -336,7 +336,7 @@ class AgentService:
         session_id: uuid.UUID,
         user_id: uuid.UUID,
         message: str,
-        user: "UserModel",
+        user: UserModel,
     ) -> AsyncIterator[ChatEvent]:
         """Execute a single chat turn and stream events to the caller.
 

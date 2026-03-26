@@ -7,10 +7,10 @@ sync:
 	uv sync --frozen
 
 dev:
-	uvicorn baize.main:app --reload --host 0.0.0.0 --port 8000
+	uv run uvicorn baize.main:app --reload --host 0.0.0.0 --port 8001
 
 test:
-	pytest
+	uv run pytest
 
 lint:
 	ruff check src tests

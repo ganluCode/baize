@@ -1,14 +1,14 @@
 """Tests for AgentConfigRepository — covers business logic and query behavior."""
 
 import uuid
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, call
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from baize.agent.models import AgentConfig
 from baize.agent.repository import AgentConfigRepository
-from baize.agent.schemas import AgentCreate, AgentUpdate
+from baize.agent.schemas import AgentUpdate
 
 
 def _make_agent(
@@ -26,8 +26,8 @@ def _make_agent(
     a.auto_memory_recall = None
     a.shared_memory = None
     a.is_default = is_default
-    a.created_at = datetime.now(timezone.utc)
-    a.updated_at = datetime.now(timezone.utc)
+    a.created_at = datetime.now(UTC)
+    a.updated_at = datetime.now(UTC)
     return a
 
 

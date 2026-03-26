@@ -11,7 +11,7 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
-from baize.user.auth_service import AuthService, AuthError  # noqa: E402
+from baize.user.auth_service import AuthError, AuthService  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
 

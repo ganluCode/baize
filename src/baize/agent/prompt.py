@@ -64,9 +64,9 @@ def _render_system_prompt(raw: str, user_name: str) -> str:
 
 
 def assemble_system_prompt(
-    agent_config: "AgentConfig",
-    user: "UserModel",
-    memories: "list[Memory] | None" = None,
+    agent_config: AgentConfig,
+    user: UserModel,
+    memories: list[Memory] | None = None,
 ) -> str:
     """Assemble the final system prompt from multiple layers.
 

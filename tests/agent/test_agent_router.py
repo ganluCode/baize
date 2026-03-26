@@ -2,7 +2,7 @@
 
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,13 +14,12 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
-from baize.main import app  # noqa: E402
 from baize.agent.schemas import AgentResponse  # noqa: E402
 from baize.agent.service import AgentServiceError  # noqa: E402
 from baize.user.deps import get_current_user  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _USER_ID = uuid.uuid4()
 _OTHER_USER_ID = uuid.uuid4()
 _AGENT_ID = uuid.uuid4()

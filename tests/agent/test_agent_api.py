@@ -10,7 +10,7 @@ Covers:
 
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,11 +25,10 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 from baize.agent.schemas import AgentResponse  # noqa: E402
 from baize.agent.service import AgentServiceError  # noqa: E402
 from baize.core.deps import get_agent_config_service  # noqa: E402
-from baize.main import app  # noqa: E402
 from baize.user.deps import get_current_user  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _USER_A_ID = uuid.uuid4()
 _USER_B_ID = uuid.uuid4()
 _AGENT_A_ID = uuid.uuid4()

@@ -11,19 +11,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 from baize.user.models import Base
 
 
-class TaskPriority(str, enum.Enum):
+class TaskPriority(enum.StrEnum):
     low = "low"
     medium = "medium"
     high = "high"
 
 
-class TaskStatus(str, enum.Enum):
+class TaskStatus(enum.StrEnum):
     todo = "todo"
     in_progress = "in_progress"
     done = "done"
 
 
-class TaskSource(str, enum.Enum):
+class TaskSource(enum.StrEnum):
     manual = "manual"
     agent = "agent"
 

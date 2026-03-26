@@ -1,11 +1,9 @@
 """Unified API response schemas and error code constants."""
 
 from enum import IntEnum
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from pydantic import BaseModel
-
-T = TypeVar("T")
 
 
 class ErrorCode(IntEnum):
@@ -19,7 +17,7 @@ class ErrorCode(IntEnum):
     INTERNAL_ERROR = 50000
 
 
-class ApiResponse(BaseModel, Generic[T]):
+class ApiResponse[T](BaseModel):
     """Unified API response envelope.
 
     Attributes:

@@ -11,12 +11,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from baize.user.models import Base
 
 
-class SessionStatus(str, enum.Enum):
+class SessionStatus(enum.StrEnum):
     active = "active"
     archived = "archived"
 
 
-class MessageRole(str, enum.Enum):
+class MessageRole(enum.StrEnum):
     user = "user"
     assistant = "assistant"
     system = "system"

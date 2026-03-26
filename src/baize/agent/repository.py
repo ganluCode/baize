@@ -1,7 +1,6 @@
 """Repository for AgentConfig database operations."""
 
 import uuid
-from typing import Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +40,7 @@ class AgentConfigRepository:
         await self._session.refresh(obj)
         return obj
 
-    async def get_by_id(self, agent_id: uuid.UUID) -> Optional[AgentConfig]:
+    async def get_by_id(self, agent_id: uuid.UUID) -> AgentConfig | None:
         """Return the agent config with the given id, or None if not found.
 
         Args:
@@ -71,7 +70,7 @@ class AgentConfigRepository:
         )
         return list(result.scalars().all())
 
-    async def update(self, agent_id: uuid.UUID, data: AgentUpdate) -> Optional[AgentConfig]:
+    async def update(self, agent_id: uuid.UUID, data: AgentUpdate) -> AgentConfig | None:
         """Apply a partial update to an agent config and return the refreshed record.
 
         Args:
@@ -114,7 +113,7 @@ class AgentConfigRepository:
         await self._session.commit()
         return True
 
-    async def get_default_by_user(self, user_id: uuid.UUID) -> Optional[AgentConfig]:
+    async def get_default_by_user(self, user_id: uuid.UUID) -> AgentConfig | None:
         """Return the default agent config for a user, or None.
 
         Args:

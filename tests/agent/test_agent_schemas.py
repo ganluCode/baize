@@ -1,7 +1,7 @@
 """Tests for AgentConfig Pydantic schemas validation rules."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -72,8 +72,8 @@ class TestAgentResponseFromAttributes:
             auto_memory_recall = True
             shared_memory = False
             is_default = True
-            created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-            updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            created_at = datetime(2026, 1, 1, tzinfo=UTC)
+            updated_at = datetime(2026, 1, 1, tzinfo=UTC)
 
         obj = FakeAgentConfig()
         for key, val in overrides.items():

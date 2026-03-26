@@ -5,7 +5,7 @@ Tokens are backed by Redis for active revocation support.
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import redis.asyncio as aioredis
 from jose import JWTError, jwt
@@ -38,7 +38,7 @@ class JWTService:
             Signed JWT string.
         """
         jti = str(uuid.uuid4())
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         exp = now + timedelta(seconds=_TOKEN_TTL_SECONDS)
 
         payload = {

@@ -19,7 +19,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from sse_starlette.sse import EventSourceResponse
 
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 async def chat_events_to_sse(
-    chat_iter: AsyncIterator["ChatEvent"],
+    chat_iter: AsyncIterator[ChatEvent],
 ) -> AsyncIterator[dict]:
     """Convert a :class:`ChatEvent` async iterator to sse-starlette-compatible dicts.
 
@@ -57,7 +58,7 @@ async def chat_events_to_sse(
         return
 
 
-def create_sse_response(chat_iter: AsyncIterator["ChatEvent"]) -> EventSourceResponse:
+def create_sse_response(chat_iter: AsyncIterator[ChatEvent]) -> EventSourceResponse:
     """Wrap a :class:`ChatEvent` async iterator in an :class:`EventSourceResponse`.
 
     Args:

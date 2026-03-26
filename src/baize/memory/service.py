@@ -25,10 +25,10 @@ class ResolvedMemoryConfig(BaseModel):
 
 
 def resolve_memory_config(
-    session: "SessionModel | None",
-    agent_config: "AgentConfig | None",
-    user: "UserModel | None",
-    global_config: "Settings",
+    session: SessionModel | None,
+    agent_config: AgentConfig | None,
+    user: UserModel | None,
+    global_config: Settings,
 ) -> ResolvedMemoryConfig:
     """Resolve effective memory flags using a four-level priority chain.
 

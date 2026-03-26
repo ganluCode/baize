@@ -1,8 +1,8 @@
 """Tests for TaskService — covers business rules and exception scenarios."""
 
 import uuid
-from datetime import date, datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, date, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -11,7 +11,6 @@ from baize.task.models import Task, TaskPriority, TaskSource, TaskStatus
 from baize.task.repository import TaskRepository
 from baize.task.schemas import TaskCreate, TaskListQuery, TaskResponse, TaskUpdate
 from baize.task.service import TaskService
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,8 +39,8 @@ def _make_task(
     t.tags = None
     t.related_memory_id = None
     t.completed_at = completed_at
-    t.created_at = datetime.now(timezone.utc)
-    t.updated_at = datetime.now(timezone.utc)
+    t.created_at = datetime.now(UTC)
+    t.updated_at = datetime.now(UTC)
     return t
 
 
@@ -101,7 +100,7 @@ async def test_complete_task_fills_completed_at(service: TaskService, repo: Asyn
     task_id = uuid.uuid4()
     task = _make_task(task_id=task_id, user_id=user_id, status=TaskStatus.todo, completed_at=None)
     updated = _make_task(
-        task_id=task_id, user_id=user_id, status=TaskStatus.done, completed_at=datetime.now(timezone.utc)
+        task_id=task_id, user_id=user_id, status=TaskStatus.done, completed_at=datetime.now(UTC)
     )
     repo.get_by_id_any.return_value = task
     repo.update.return_value = updated
@@ -119,7 +118,7 @@ async def test_reopen_task_clears_completed_at(service: TaskService, repo: Async
     user_id = uuid.uuid4()
     task_id = uuid.uuid4()
     task = _make_task(
-        task_id=task_id, user_id=user_id, status=TaskStatus.done, completed_at=datetime.now(timezone.utc)
+        task_id=task_id, user_id=user_id, status=TaskStatus.done, completed_at=datetime.now(UTC)
     )
     updated = _make_task(task_id=task_id, user_id=user_id, status=TaskStatus.todo, completed_at=None)
     repo.get_by_id_any.return_value = task
@@ -136,7 +135,7 @@ async def test_complete_task_no_change_when_already_done(service: TaskService, r
     """Updating a task already done to done again does not reset completed_at."""
     user_id = uuid.uuid4()
     task_id = uuid.uuid4()
-    original_ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    original_ts = datetime(2026, 1, 1, tzinfo=UTC)
     task = _make_task(task_id=task_id, user_id=user_id, status=TaskStatus.done, completed_at=original_ts)
     repo.get_by_id_any.return_value = task
     repo.update.return_value = task

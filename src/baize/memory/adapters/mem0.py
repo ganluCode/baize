@@ -9,7 +9,7 @@ dict expected by ``mem0.Memory.from_config()``.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from mem0 import Memory
@@ -152,15 +152,15 @@ class Mem0Adapter(MemoryServiceInterface):
         """
         if isinstance(value, datetime):
             if value.tzinfo is None:
-                return value.replace(tzinfo=timezone.utc)
+                return value.replace(tzinfo=UTC)
             return value
         if isinstance(value, str):
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
+                return dt.replace(tzinfo=UTC)
             return dt
         # Fallback: use current UTC time
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
 
     @staticmethod
     def _map_item(raw: dict[str, Any]) -> MemoryItem:
@@ -185,8 +185,8 @@ class Mem0Adapter(MemoryServiceInterface):
             shared=shared,
             metadata=extra_meta or None,
             score=raw.get("score"),
-            created_at=Mem0Adapter._parse_datetime(raw.get("created_at", datetime.now(tz=timezone.utc))),
-            updated_at=Mem0Adapter._parse_datetime(raw.get("updated_at", datetime.now(tz=timezone.utc))),
+            created_at=Mem0Adapter._parse_datetime(raw.get("created_at", datetime.now(tz=UTC))),
+            updated_at=Mem0Adapter._parse_datetime(raw.get("updated_at", datetime.now(tz=UTC))),
         )
 
     # ------------------------------------------------------------------

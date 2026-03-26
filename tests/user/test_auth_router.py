@@ -11,9 +11,9 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
-from baize.main import app  # noqa: E402
 from baize.user.auth_router import _get_auth_service  # noqa: E402
-from baize.user.auth_service import AuthError, TokenResponse as ServiceTokenResponse  # noqa: E402
+from baize.user.auth_service import AuthError  # noqa: E402
+from baize.user.auth_service import TokenResponse as ServiceTokenResponse
 
 
 @pytest.fixture

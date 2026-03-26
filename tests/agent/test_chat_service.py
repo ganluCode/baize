@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +16,6 @@ from baize.memory.interface import Memory, MemoryServiceInterface
 from baize.session.models import MessageRole, SessionModel
 from baize.session.service import SessionService
 from baize.user.models import UserModel
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,8 +39,8 @@ def _make_agent(
     a.auto_memory_recall = auto_memory_recall
     a.shared_memory = None
     a.is_default = True
-    a.created_at = datetime.now(timezone.utc)
-    a.updated_at = datetime.now(timezone.utc)
+    a.created_at = datetime.now(UTC)
+    a.updated_at = datetime.now(UTC)
     return a
 
 
@@ -58,8 +56,8 @@ def _make_session(user_id: uuid.UUID, agent_id: uuid.UUID) -> SessionModel:
     from baize.session.models import SessionStatus
 
     s.status = SessionStatus.active
-    s.created_at = datetime.now(timezone.utc)
-    s.updated_at = datetime.now(timezone.utc)
+    s.created_at = datetime.now(UTC)
+    s.updated_at = datetime.now(UTC)
     return s
 
 
@@ -74,8 +72,8 @@ def _make_user(user_id: uuid.UUID | None = None) -> UserModel:
     u.api_key_hash = None
     u.preferences = None
     u.is_active = True
-    u.created_at = datetime.now(timezone.utc)
-    u.updated_at = datetime.now(timezone.utc)
+    u.created_at = datetime.now(UTC)
+    u.updated_at = datetime.now(UTC)
     return u
 
 
@@ -220,7 +218,9 @@ async def test_chat_recalls_memory_when_auto_memory_recall_enabled() -> None:
 
     memory_svc = AsyncMock(spec=MemoryServiceInterface)
     _now = datetime(2026, 1, 1, 0, 0, 0)
-    memory_svc.search.return_value = [Memory(id="1", content="Test memory", user_id="u-1", created_at=_now, updated_at=_now)]
+    memory_svc.search.return_value = [
+        Memory(id="1", content="Test memory", user_id="u-1", created_at=_now, updated_at=_now),
+    ]
 
     mock_graph = MagicMock()
     mock_graph.astream_events = _make_simple_stream(

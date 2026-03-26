@@ -1,7 +1,7 @@
 """Tests for SessionRepository — covers filtering and ordering logic."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,8 +24,8 @@ def _make_session(
     s.status = status
     s.auto_memory_recall = None
     s.shared_memory = None
-    s.created_at = datetime.now(timezone.utc)
-    s.updated_at = updated_at or datetime.now(timezone.utc)
+    s.created_at = datetime.now(UTC)
+    s.updated_at = updated_at or datetime.now(UTC)
     return s
 
 

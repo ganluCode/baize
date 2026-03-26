@@ -9,7 +9,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from pydantic import Field
@@ -93,8 +93,8 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Observability
-    langfuse_public_key: Optional[str] = None
-    langfuse_secret_key: Optional[str] = None
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
     langfuse_host: str = "http://langfuse:3000"
     log_level: str = "INFO"
 

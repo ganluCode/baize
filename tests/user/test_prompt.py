@@ -1,9 +1,6 @@
 """Unit tests for build_user_preferences_prompt."""
 
-import uuid
 from unittest.mock import MagicMock
-
-import pytest
 
 from baize.user.prompt import build_user_preferences_prompt
 

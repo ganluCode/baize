@@ -25,13 +25,11 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 from baize.agent.chat_router import _get_user_model  # noqa: E402
 from baize.agent.service import ChatEvent  # noqa: E402
-from baize.auth.deps import get_current_user as auth_get_current_user  # noqa: E402
 from baize.core.deps import (  # noqa: E402
     get_agent_config_service,
     get_agent_service,
     get_session_service,
 )
-from baize.main import app  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
 _CHAT_URL = "/api/v1/chat"
@@ -291,7 +289,7 @@ async def test_agent_exception_sends_sse_error_event(
 
     async def _failing_chat():
         raise RuntimeError("LLM connection failed")
-        yield  # noqa: unreachable — makes this an async generator
+        yield  # noqa: F841 — makes this an async generator
 
     mock_agent_svc.chat = MagicMock(return_value=_failing_chat())
 

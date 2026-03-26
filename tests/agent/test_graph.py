@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool as lc_tool
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from baize.memory.interface import MemoryItem
 
@@ -215,7 +215,10 @@ class TestAutoMemoryRecall:
 
         svc.search.assert_called_once()
         call_kwargs = svc.search.call_args
-        assert call_kwargs.args[0] == "What do I like?" or call_kwargs.kwargs.get("query") == "What do I like?" or call_kwargs.args[0] == "What do I like?"
+        assert (
+            call_kwargs.args[0] == "What do I like?"
+            or call_kwargs.kwargs.get("query") == "What do I like?"
+        )
 
     async def test_auto_recall_passes_user_id_and_agent_id_to_service(self):
         """search should be called with user_id and agent_id from state."""

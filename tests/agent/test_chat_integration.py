@@ -25,7 +25,6 @@ from baize.core.deps import (  # noqa: E402
     get_agent_service,
     get_session_service,
 )
-from baize.main import app  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
 _SSE_URL = "/api/v1/chat"
@@ -277,7 +276,7 @@ async def test_sse_agent_exception_pushes_error_event_not_500(
 
     async def _failing_chat():
         raise RuntimeError("LLM backend unavailable")
-        yield  # noqa: unreachable — makes this an async generator
+        yield  # noqa: F841 — makes this an async generator
 
     mock_agent_svc.chat = MagicMock(return_value=_failing_chat())
 

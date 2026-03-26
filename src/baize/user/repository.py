@@ -1,7 +1,7 @@
 """User repository for database access operations."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,7 +72,7 @@ class UserRepository:
         """Update only the fields present in data and persist the changes."""
         for key, value in data.items():
             setattr(user, key, value)
-        user.updated_at = datetime.now(tz=timezone.utc)
+        user.updated_at = datetime.now(tz=UTC)
         await self._session.commit()
         await self._session.refresh(user)
         return user

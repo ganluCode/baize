@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -182,6 +181,7 @@ class TestFallbackOnLLMFailure:
     @pytest.mark.asyncio
     async def test_fallback_logs_warning(self, caplog):
         import logging
+
         from baize.agent.context import compress_history
 
         llm = AsyncMock()

@@ -179,8 +179,14 @@ async def test_save_memory_passes_user_id_agent_id_session_id_to_service() -> No
 @pytest.mark.asyncio
 async def test_search_memory_returns_formatted_list_on_success() -> None:
     memories = [
-        Memory(id="m1", content="I love Python", user_id="u-1", score=0.95, metadata={}, created_at=_NOW, updated_at=_NOW),
-        Memory(id="m2", content="FastAPI is great", user_id="u-1", score=0.82, metadata={}, created_at=_NOW, updated_at=_NOW),
+        Memory(
+            id="m1", content="I love Python", user_id="u-1",
+            score=0.95, metadata={}, created_at=_NOW, updated_at=_NOW,
+        ),
+        Memory(
+            id="m2", content="FastAPI is great", user_id="u-1",
+            score=0.82, metadata={}, created_at=_NOW, updated_at=_NOW,
+        ),
     ]
     svc = _make_memory_service(search_return=memories)
 
@@ -199,7 +205,10 @@ async def test_search_memory_returns_formatted_list_on_success() -> None:
 async def test_search_memory_returns_formatted_list_without_score() -> None:
     """Memories with score=None should omit the score annotation."""
     memories = [
-        Memory(id="m1", content="No score memory", user_id="u-1", score=None, metadata={}, created_at=_NOW, updated_at=_NOW),
+        Memory(
+            id="m1", content="No score memory", user_id="u-1",
+            score=None, metadata={}, created_at=_NOW, updated_at=_NOW,
+        ),
     ]
     svc = _make_memory_service(search_return=memories)
 

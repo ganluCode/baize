@@ -9,11 +9,8 @@ Acceptance criteria:
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from baize.memory.config import MemoryConfig
 from baize.memory.service import ResolvedMemoryConfig, resolve_memory_config
-
 
 # ---------------------------------------------------------------------------
 # Helpers

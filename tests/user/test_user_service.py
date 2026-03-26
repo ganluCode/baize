@@ -2,7 +2,7 @@
 
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,7 +16,7 @@ from baize.user.models import UserModel  # noqa: E402
 from baize.user.schemas import UserCreateRequest, UserUpdateRequest  # noqa: E402
 from baize.user.service import UserService, UserServiceError  # noqa: E402
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _make_user(

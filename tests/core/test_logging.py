@@ -2,11 +2,8 @@
 
 import io
 import json
-import logging
-import sys
 from unittest.mock import patch
 
-import pytest
 import structlog
 
 from baize.core.logging import setup_logging

@@ -2,8 +2,8 @@
 
 import os
 import uuid
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -14,10 +14,8 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
-from baize.main import app  # noqa: E402
 from baize.user.deps import get_current_user, require_admin  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
-from baize.user.repository import UserRepository  # noqa: E402
 from baize.user.router import _get_user_service  # noqa: E402
 from baize.user.schemas import (  # noqa: E402
     ResetKeyResponse,
@@ -27,7 +25,7 @@ from baize.user.schemas import (  # noqa: E402
 )
 from baize.user.service import UserServiceError  # noqa: E402
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _USER_ID = uuid.uuid4()
 _ADMIN_ID = uuid.uuid4()
 

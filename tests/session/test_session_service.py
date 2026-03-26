@@ -1,7 +1,7 @@
 """Tests for SessionService — covers save_message, get_history, get_or_create_session."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -28,8 +28,8 @@ def _make_session(
     s.status = SessionStatus.active
     s.auto_memory_recall = None
     s.shared_memory = None
-    s.created_at = datetime.now(timezone.utc)
-    s.updated_at = datetime.now(timezone.utc)
+    s.created_at = datetime.now(UTC)
+    s.updated_at = datetime.now(UTC)
     return s
 
 
@@ -43,7 +43,7 @@ def _make_message(session_id: uuid.UUID | None = None) -> ChatMessageModel:
     msg.tool_calls = None
     msg.tool_name = None
     msg.token_usage = None
-    msg.created_at = datetime.now(timezone.utc)
+    msg.created_at = datetime.now(UTC)
     return msg
 
 

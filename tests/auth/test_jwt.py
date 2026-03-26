@@ -2,7 +2,7 @@
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import fakeredis.aioredis
 import pytest
@@ -22,7 +22,7 @@ _ALGORITHM = "HS256"
 
 def _make_token(user_id: str, jti: str, expires_delta: timedelta = timedelta(hours=1)) -> str:
     """Helper to create a signed JWT."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     payload = {
         "user_id": user_id,
         "role": "user",

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 
 from baize.agent.service import ChatEvent
 from baize.agent.streaming import chat_events_to_sse
-
 
 # ---------------------------------------------------------------------------
 # Helpers

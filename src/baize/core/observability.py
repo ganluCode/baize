@@ -5,7 +5,6 @@ injecting into LangGraph/LangChain invocations.
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -60,5 +59,5 @@ def create_langfuse_handler(settings=None):  # type: ignore[no-untyped-def]
         return None
 
 
-LangfuseCallbackHandler = Optional[object]
+LangfuseCallbackHandler = object | None
 """Type alias for the optional callback handler returned by :func:`create_langfuse_handler`."""

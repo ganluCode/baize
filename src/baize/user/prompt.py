@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from baize.user.models import UserModel
 
 
-def build_user_preferences_prompt(user: "UserModel") -> str:
+def build_user_preferences_prompt(user: UserModel) -> str:
     """Convert user.preferences into a text snippet for injection into Agent System Prompt.
 
     Args:

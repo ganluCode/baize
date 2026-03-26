@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import bcrypt
 
-from baize.user.jwt_service import JWTService, TokenError
+from baize.user.jwt_service import JWTService
 from baize.user.repository import UserRepository
 
 logger = logging.getLogger(__name__)

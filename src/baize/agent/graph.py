@@ -7,13 +7,13 @@ compiles a ReAct loop: LLM node → conditional edge → ToolNode → loop back.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Sequence
+from collections.abc import Sequence
+from typing import Annotated, Any, NotRequired
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from typing import NotRequired
 from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
