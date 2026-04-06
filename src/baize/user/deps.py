@@ -116,23 +116,31 @@ async def get_current_user(
     Raises:
         HTTPException: 401 if neither authentication method succeeds.
     """
-    # Try JWT first
+    repo = UserRepository(session)
+    bearer_token: str | None = None
+
     if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]
+        bearer_token = authorization[7:]
+
+    # 1. Try JWT (Bearer token that looks like a JWT)
+    if bearer_token:
         try:
-            payload = await container.jwt_service.verify_token(token)
+            payload = await container.jwt_service.verify_token(bearer_token)
             user_id = uuid.UUID(payload["user_id"])
-            repo = UserRepository(session)
             user = await repo.get_by_id(user_id)
             if user is not None:
                 return user
         except (TokenError, Exception):
             pass
 
-    # Fall back to API key
-    if x_api_key:
-        lookup_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-        repo = UserRepository(session)
+    # 2. Try X-API-Key header
+    api_key = x_api_key
+    # 3. If no X-API-Key, try Bearer token as API Key (for OpenAI-compatible clients)
+    if not api_key and bearer_token:
+        api_key = bearer_token
+
+    if api_key:
+        lookup_hash = hashlib.sha256(api_key.encode()).hexdigest()
         user = await repo.get_by_api_key_hash(lookup_hash)
         if user is not None:
             return user

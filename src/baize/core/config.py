@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _ENV_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 # Default path relative to project root; can be overridden via CONFIG_YAML_PATH env var.
-_DEFAULT_CONFIG_YAML = str(Path(__file__).parents[4] / "config" / "config.yaml")
+_DEFAULT_CONFIG_YAML = str(Path(__file__).parents[3] / "config" / "config.yaml")
 
 
 class MissingEnvVarError(KeyError):
@@ -90,7 +90,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     newapi_api_key: str = ""
 
+    server_host: str = "0.0.0.0"
+    server_port: int = 8000
     debug: bool = False
+
+    # OpenMemory
+    openmemory_base_url: str | None = None
+    openmemory_api_key: str | None = None
 
     # Observability
     langfuse_public_key: str | None = None

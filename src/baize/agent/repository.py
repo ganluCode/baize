@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.agent.models import AgentConfig
 from baize.agent.schemas import AgentCreate, AgentUpdate
+from baize.user.models import UserModel
 
 
 class AgentConfigRepository:
@@ -29,11 +30,13 @@ class AgentConfigRepository:
             user_id=user_id,
             name=data.name,
             description=data.description,
-            system_prompt=data.system_prompt,
-            tools=data.tools,
-            model_config=data.llm_config,
-            auto_memory_recall=data.auto_memory_recall,
-            shared_memory=data.shared_memory,
+            agent_type=data.agent_type,
+            prompts=data.prompts.model_dump(exclude_none=True) if data.prompts else None,
+            model_config_json=data.llm_config,
+            tools=data.tools.model_dump() if data.tools else None,
+            sub_agents=data.sub_agents,
+            memory_config=data.memory_config.model_dump() if data.memory_config else None,
+            guardrails=data.guardrails.model_dump() if data.guardrails else None,
         )
         self._session.add(obj)
         await self._session.commit()
@@ -85,9 +88,9 @@ class AgentConfigRepository:
             return None
 
         update_data = data.model_dump(exclude_none=True, by_alias=False)
-        # llm_config maps to the model's model_config field
+        # llm_config maps to the ORM's model_config_json field
         if "llm_config" in update_data:
-            update_data["model_config"] = update_data.pop("llm_config")
+            update_data["model_config_json"] = update_data.pop("llm_config")
 
         for key, value in update_data.items():
             setattr(obj, key, value)
@@ -116,46 +119,46 @@ class AgentConfigRepository:
     async def get_default_by_user(self, user_id: uuid.UUID) -> AgentConfig | None:
         """Return the default agent config for a user, or None.
 
-        Args:
-            user_id: The user whose default agent to look up.
-
-        Returns:
-            The AgentConfig with is_default=True, or None.
+        Reads ``system_users.default_agent_id`` and loads the referenced agent.
         """
-        result = await self._session.execute(
-            select(AgentConfig).where(
-                AgentConfig.user_id == user_id,
-                AgentConfig.is_default.is_(True),
-            )
+        user_result = await self._session.execute(
+            select(UserModel.default_agent_id).where(UserModel.id == user_id)
         )
-        return result.scalar_one_or_none()
+        default_id = user_result.scalar_one_or_none()
+        if default_id is None:
+            return None
+        return await self.get_by_id(default_id)
 
     async def set_default(self, user_id: uuid.UUID, agent_id: uuid.UUID) -> None:
         """Set a specific agent as the default for a user.
 
-        Clears is_default on all of the user's agents, then sets is_default=True
-        on the specified agent if it belongs to that user.
-
-        Args:
-            user_id: The user whose default to change.
-            agent_id: The agent to mark as default.
+        Only sets the default if the agent belongs to the user.
         """
-        # Clear all defaults for this user
-        await self._session.execute(
-            update(AgentConfig)
-            .where(AgentConfig.user_id == user_id)
-            .values(is_default=False)
-        )
-
-        # Set the target agent as default (only if it belongs to this user)
-        target = await self._session.execute(
-            select(AgentConfig).where(
+        # Verify the agent belongs to the user
+        check = await self._session.execute(
+            select(AgentConfig.id).where(
                 AgentConfig.id == agent_id,
                 AgentConfig.user_id == user_id,
             )
         )
-        obj = target.scalar_one_or_none()
-        if obj is not None:
-            obj.is_default = True
+        if check.scalar_one_or_none() is None:
+            return
 
+        await self._session.execute(
+            update(UserModel)
+            .where(UserModel.id == user_id)
+            .values(default_agent_id=agent_id)
+        )
+        await self._session.commit()
+
+    async def clear_default_if_matches(self, user_id: uuid.UUID, agent_id: uuid.UUID) -> None:
+        """Clear the user's default_agent_id if it currently points to agent_id."""
+        await self._session.execute(
+            update(UserModel)
+            .where(
+                UserModel.id == user_id,
+                UserModel.default_agent_id == agent_id,
+            )
+            .values(default_agent_id=None)
+        )
         await self._session.commit()

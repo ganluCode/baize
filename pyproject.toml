@@ -2,7 +2,7 @@
 name = "baize"
 version = "0.1.0"
 description = "Personal AI assistant core (Agent hub)"
-requires-python = ">=3.12"
+requires-python = "==3.12.*"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -23,7 +23,7 @@ dependencies = [
     "sse-starlette>=3.3.3",
     "mem0ai>=0.1.0",
     "langchain>=1.0.0",
-    "langfuse>=4.0.0",
+    "langfuse>=2.0.0,<3.0.0",
     "structlog>=24.0.0",
 ]
 

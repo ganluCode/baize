@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from baize.user.prompt import build_user_preferences_prompt
+from baize.context.user_prefs import build_user_preferences_prompt
 
 
 def _make_user(preferences: dict | None, name: str = "ganlu") -> MagicMock:

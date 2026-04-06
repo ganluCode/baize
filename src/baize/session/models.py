@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, func
+from sqlalchemy import DateTime, Enum, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,15 +30,9 @@ class SessionModel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    agent_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("agent_configs.id"),
-        nullable=False,
-    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     title_gen_attempts: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
-    auto_memory_recall: Mapped[bool | None] = mapped_column(nullable=True)
-    shared_memory: Mapped[bool | None] = mapped_column(nullable=True)
     status: Mapped[SessionStatus] = mapped_column(
         Enum(SessionStatus, name="session_status"),
         nullable=False,
@@ -61,11 +55,7 @@ class ChatMessageModel(Base):
     __tablename__ = "chat_messages"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     role: Mapped[MessageRole] = mapped_column(
         Enum(MessageRole, name="message_role"),

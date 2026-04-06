@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.agent.repository import AgentConfigRepository
 from baize.agent.service import AgentConfigService, AgentService
+from baize.context.service import ContextService
 from baize.core.container import Container
 from baize.core.database import get_db
 from baize.llm.model_router import ModelRouter
@@ -103,10 +104,27 @@ def get_model_router(container: Container = Depends(get_container)) -> ModelRout
     return container.model_router
 
 
+def get_context_service(
+    db: AsyncSession = Depends(get_db),
+    memory_service: MemoryServiceInterface | None = Depends(get_memory_service),
+    container: Container = Depends(get_container),
+) -> ContextService:
+    """Dependency factory for ContextService — builds a per-request instance."""
+    session_repo = SessionRepository(db)
+    message_repo = ChatMessageRepository(db)
+    session_svc = SessionService(session_repo=session_repo, message_repo=message_repo)
+    return ContextService(
+        session_service=session_svc,
+        memory_service=memory_service,
+        settings=container.config,
+    )
+
+
 def get_agent_service(
     db: AsyncSession = Depends(get_db),
     model_router: ModelRouter = Depends(get_model_router),
     memory_service: MemoryServiceInterface | None = Depends(get_memory_service),
+    context_service: ContextService = Depends(get_context_service),
 ) -> AgentService:
     """Dependency factory for AgentService — builds a per-request instance."""
     agent_repo = AgentConfigRepository(db)
@@ -119,4 +137,5 @@ def get_agent_service(
         session_service=session_svc,
         memory_service=memory_service,
         model_router=model_router,
+        context_service=context_service,
     )

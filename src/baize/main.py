@@ -16,6 +16,10 @@ from baize.core.deps import set_container
 from baize.core.exceptions import register_exception_handlers
 from baize.core.logging import setup_logging
 from baize.llm.router import router as llm_router
+from baize.metadata.router import router as metadata_router
+from baize.openai_compat.router_completions import router as completions_router
+from baize.openai_compat.router_models import router as models_router
+from baize.openai_compat.router_responses import router as responses_router
 from baize.session.router import router as session_router
 from baize.session.router import session_router as session_detail_router
 from baize.task.router import router as task_router
@@ -51,6 +55,8 @@ app = FastAPI(
         {"name": "tasks"},
         {"name": "llm"},
         {"name": "users"},
+        {"name": "metadata"},
+        {"name": "openai-compat"},
     ],
     lifespan=lifespan,
 )
@@ -74,6 +80,12 @@ app.include_router(chat_router, prefix="/api/v1")
 app.include_router(session_router, prefix="/api/v1")
 app.include_router(session_detail_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
+app.include_router(metadata_router, prefix="/api/v1")
+
+# OpenAI-compatible endpoints (mounted at /v1, not /api/v1)
+app.include_router(models_router, prefix="/v1")
+app.include_router(responses_router, prefix="/v1")
+app.include_router(completions_router, prefix="/v1")
 
 
 @app.get("/health")

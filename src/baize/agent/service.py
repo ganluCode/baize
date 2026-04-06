@@ -13,34 +13,44 @@ from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import HTTPException
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
-from baize.agent.context import compress_history
-from baize.agent.graph import build_react_graph
 from baize.agent.models import AgentConfig
-from baize.agent.prompt import assemble_system_prompt
 from baize.agent.repository import AgentConfigRepository
 from baize.agent.schemas import AgentCreate, AgentUpdate
 from baize.agent.tools import ToolRegistry
-from baize.session.models import MessageRole
 from baize.session.service import SessionService
 
 if TYPE_CHECKING:
+    from baize.context.service import ContextService
     from baize.llm.model_router import ModelRouter
-    from baize.memory.interface import Memory, MemoryServiceInterface
+    from baize.memory.interface import MemoryServiceInterface
     from baize.user.models import UserModel
 
-_DEFAULT_AGENT_PROMPT_PATH = (
-    Path(__file__).parents[3] / "config" / "prompts" / "default_agent.md"
-)
+_PROMPTS_DIR = Path(__file__).parents[3] / "config" / "prompts"
+_DEFAULT_SOUL_PATH = _PROMPTS_DIR / "default_soul.md"
+_DEFAULT_BEHAVIOR_PATH = _PROMPTS_DIR / "default_behavior.md"
 
-_DEFAULT_AGENT_TOOLS = [
-    "save_memory",
-    "search_memory",
-    "create_task",
-    "list_tasks",
-    "complete_task",
-]
+
+def _read_prompt_file(path: Path) -> str | None:
+    """Read a prompt file, returning None if missing (with a warning)."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("Prompt file not found at %s.", path)
+        return None
+
+_DEFAULT_AGENT_TOOLS = {
+    "builtin": [
+        "save_memory",
+        "search_memory",
+        "create_task",
+        "list_tasks",
+        "complete_task",
+    ],
+    "mcp_servers": [],
+    "skills": [],
+}
 
 logger = logging.getLogger(__name__)
 _slog = structlog.get_logger(__name__)
@@ -69,17 +79,24 @@ class AgentConfigService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _validate_tools(self, tools: list[str]) -> None:
-        """Raise AgentServiceError if any tool name is not registered.
+    def _validate_tools(self, tools) -> None:
+        """Raise AgentServiceError if any builtin tool name is not registered.
 
         Args:
-            tools: List of tool names to validate.
+            tools: ToolsConfig or dict with builtin/mcp_servers/skills keys.
 
         Raises:
-            AgentServiceError: 400 if any name is not in the ToolRegistry.
+            AgentServiceError: 400 if any builtin name is not in the ToolRegistry.
         """
+        if tools is None:
+            return
+        builtin = []
+        if hasattr(tools, "builtin"):
+            builtin = tools.builtin
+        elif isinstance(tools, dict):
+            builtin = tools.get("builtin", [])
         registered = set(ToolRegistry.get_all_names())
-        invalid = [t for t in tools if t not in registered]
+        invalid = [t for t in builtin if t not in registered]
         if invalid:
             raise AgentServiceError(
                 f"Unknown tools: {', '.join(sorted(invalid))}. "
@@ -94,8 +111,8 @@ class AgentConfigService:
     async def create(self, user_id: uuid.UUID, data: AgentCreate) -> AgentConfig:
         """Create a new agent configuration.
 
-        If ``data.is_default`` is True, the existing default agent for the user
-        is demoted before the new one is created.
+        If ``data.set_as_default`` is True, the new agent becomes the user's default
+        (overwriting ``system_users.default_agent_id``).
 
         Args:
             user_id: The user who owns the new agent.
@@ -112,9 +129,8 @@ class AgentConfigService:
         agent = await self._repo.create(user_id, data)
         logger.debug("Created agent %s for user %s.", agent.id, user_id)
 
-        if data.is_default:
+        if data.set_as_default:
             await self._repo.set_default(user_id, agent.id)
-            agent.is_default = True
 
         return agent
 
@@ -152,10 +168,7 @@ class AgentConfigService:
     ) -> AgentConfig:
         """Partially update an agent configuration.
 
-        If ``data.is_default`` is True, this agent becomes the user's default
-        (demoting the previous default). Setting ``is_default=False`` on the
-        current default agent is a no-op — the default can only be changed by
-        promoting another agent.
+        If ``data.set_as_default`` is True, this agent becomes the user's default.
 
         Args:
             agent_id: The agent to update.
@@ -177,9 +190,8 @@ class AgentConfigService:
         updated = await self._repo.update(agent_id, data)
         assert updated is not None  # we verified it exists above
 
-        if data.is_default is True:
+        if data.set_as_default is True:
             await self._repo.set_default(user_id, agent_id)
-            updated.is_default = True
 
         logger.debug("Updated agent %s.", agent_id)
         return updated
@@ -187,8 +199,9 @@ class AgentConfigService:
     async def create_default_agent(self, user_id: uuid.UUID) -> AgentConfig:
         """Create the default 白泽（Baize）agent for a newly created user.
 
-        Reads the system prompt from ``config/prompts/default_agent.md`` and
-        creates an agent with the standard tool set and ``is_default=True``.
+        Reads the layered prompts from ``config/prompts/default_soul.md`` and
+        ``config/prompts/default_behavior.md``, assigns the standard tool set,
+        and sets the new agent as default.
 
         Args:
             user_id: The user who will own the default agent.
@@ -196,21 +209,19 @@ class AgentConfigService:
         Returns:
             The newly created default AgentConfig.
         """
-        try:
-            system_prompt = _DEFAULT_AGENT_PROMPT_PATH.read_text(encoding="utf-8")
-        except OSError:
-            logger.warning(
-                "Default agent prompt not found at %s; using empty prompt.",
-                _DEFAULT_AGENT_PROMPT_PATH,
-            )
-            system_prompt = ""
+        from baize.agent.schemas import AgentPrompts, ToolsConfig
+
+        prompts = AgentPrompts(
+            soul=_read_prompt_file(_DEFAULT_SOUL_PATH),
+            behavior=_read_prompt_file(_DEFAULT_BEHAVIOR_PATH),
+        )
 
         data = AgentCreate(
             name="白泽（Baize）",
             description="你的个人 AI 助理",
-            system_prompt=system_prompt,
-            tools=_DEFAULT_AGENT_TOOLS,
-            is_default=True,
+            prompts=prompts,
+            tools=ToolsConfig(**_DEFAULT_AGENT_TOOLS),
+            set_as_default=True,
         )
         return await self.create(user_id, data)
 
@@ -228,8 +239,7 @@ class AgentConfigService:
     async def delete(self, agent_id: uuid.UUID, user_id: uuid.UUID) -> None:
         """Delete an agent configuration and cascade-delete its sessions.
 
-        The default agent cannot be deleted while it is still the only or the
-        designated default — callers must promote another agent first.
+        If this agent is the user's default, ``default_agent_id`` is cleared.
 
         Args:
             agent_id: The agent to delete.
@@ -237,15 +247,11 @@ class AgentConfigService:
 
         Raises:
             AgentServiceError: 404 if not found or not owned by user.
-            AgentServiceError: 400 if the agent is the user's default.
         """
-        agent = await self.get(agent_id, user_id)
+        await self.get(agent_id, user_id)
 
-        if agent.is_default:
-            raise AgentServiceError(
-                "Cannot delete the default agent. Promote another agent as default first.",
-                status_code=400,
-            )
+        # Clear default pointer if it referenced this agent
+        await self._repo.clear_default_if_matches(user_id, agent_id)
 
         await self._session_service.delete_sessions_by_agent(agent_id)
         await self._repo.delete(agent_id)
@@ -274,29 +280,18 @@ _MAX_TOOL_CALLS: int = 10
 _CHAT_TIMEOUT: float = 120.0
 
 
-def _history_to_lc_messages(messages):
-    """Convert a list of ChatMessageModel to LangChain BaseMessage objects."""
-
-    result = []
-    for msg in messages:
-        if msg.role == MessageRole.user:
-            result.append(HumanMessage(content=msg.content))
-        elif msg.role == MessageRole.assistant:
-            result.append(AIMessage(content=msg.content))
-        elif msg.role == MessageRole.system:
-            result.append(SystemMessage(content=msg.content))
-        # tool-role messages are skipped (not directly representable for replay)
-    return result
-
-
 class AgentService:
-    """Orchestrates a complete chat turn: prompt assembly, LangGraph execution, and persistence.
+    """Orchestrates a complete chat turn: LLM resolution, LangGraph execution, and persistence.
+
+    Context preparation (memory recall, system prompt assembly, history
+    compression) is delegated to :class:`~baize.context.service.ContextService`.
 
     Args:
         agent_config_service: Used to load and validate AgentConfig.
         session_service: Used to load history, create sessions, and save messages.
-        memory_service: Optional memory backend for auto-recall.
+        memory_service: Optional memory backend (passed through to graph state).
         model_router: Resolves the LLM instance to use.
+        context_service: Prepares the layered context for each chat turn.
     """
 
     def __init__(
@@ -305,11 +300,23 @@ class AgentService:
         session_service: SessionService,
         memory_service: MemoryServiceInterface | None,
         model_router: ModelRouter,
+        context_service: ContextService,
     ) -> None:
         self._agent_config_svc = agent_config_service
         self._session_svc = session_service
         self._memory_svc = memory_service
         self._model_router = model_router
+        self._context_svc = context_service
+
+    def _resolve_llm(self, agent_config: AgentConfig):
+        """Resolve the chat LLM using the agent's model_config, falling back to 'default'."""
+        ref: str | None = None
+        if agent_config.model_config_json and isinstance(agent_config.model_config_json, dict):
+            ref = agent_config.model_config_json.get("chat")
+        if ref:
+            provider_name, model_id = ref.split("/", 1)
+            return self._model_router._factory.get_chat_model(provider_name, model_id)
+        return self._model_router.get_chat_model("default")
 
     async def _get_or_create_session(self, session_id: uuid.UUID, user_id: uuid.UUID, agent_id: uuid.UUID):
         """Return the session if found, or create a new one if not found.
@@ -354,8 +361,21 @@ class AgentService:
             :class:`ChatEvent` instances of type "token", "tool_call", "tool_result",
             "done", or "error".
         """
+        from baize.agent.nodes.base import NodeContext
+        from baize.agent.nodes.context_node import ContextNode
+        from baize.agent.nodes.persist_node import PersistNode
+        from baize.agent.nodes.react_node import ReactNode
+        from baize.core.observability import TraceCollector
+
         _slog.info(
             "chat_request",
+            user_id=str(user_id),
+            session_id=str(session_id),
+            agent_id=str(agent_id),
+        )
+
+        # 0. Create trace collector (spans reported in real time by each node)
+        collector = TraceCollector(
             user_id=str(user_id),
             session_id=str(session_id),
             agent_id=str(agent_id),
@@ -365,182 +385,75 @@ class AgentService:
         try:
             agent_config = await self._agent_config_svc.get(agent_id, user_id)
         except AgentServiceError as exc:
-            _slog.error(
-                "agent_error",
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-                user_id=str(user_id),
-                session_id=str(session_id),
-                agent_id=str(agent_id),
-            )
+            _slog.error("agent_error", error_type=type(exc).__name__,
+                        error_message=str(exc), user_id=str(user_id),
+                        session_id=str(session_id), agent_id=str(agent_id))
+            collector.finalize(error=str(exc))
             yield ChatEvent(type="error", payload={"message": str(exc)})
             return
 
+        collector.agent_name = agent_config.name
+
         # 2. Load or auto-create session
         session = await self._get_or_create_session(session_id, user_id, agent_id)
+        collector.session_id = str(session.id)
 
-        # 2b. Resolve memory configuration (used both for auto-recall and tool injection)
-        from baize.core.config import get_settings
-        from baize.memory.service import resolve_memory_config
+        # 3. Resolve LLM
+        llm = self._resolve_llm(agent_config)
 
-        resolved_memory = resolve_memory_config(
-            session=session,
+        # 4. Build shared node context
+        ctx = NodeContext(
+            collector=collector,
+            user_id=str(user_id),
+            session_id=str(session.id),
+            agent_id=str(agent_id),
+            message=message,
+        )
+        collector.set_input(message)
+
+        # 5. Node: Context preparation (memory + prompt + history)
+        context_node = ContextNode(
+            context_svc=self._context_svc,
             agent_config=agent_config,
             user=user,
-            global_config=get_settings(),
+            llm=llm,
         )
-
-        # 3. Memory recall (if enabled)
-        memories: list[Memory] = []
-        if resolved_memory.auto_memory_recall and self._memory_svc is not None:
-            try:
-                memories = await self._memory_svc.search(message, top_k=5)
-            except Exception:
-                logger.warning("Memory recall failed; continuing without memories.", exc_info=True)
-
-        # 4. Assemble system prompt
-        system_prompt = assemble_system_prompt(agent_config, user, memories)
-
-        # 5. Load and compress conversation history
-        history_models = await self._session_svc.get_history(session.id)
-        lc_history = _history_to_lc_messages(history_models)
-
-        llm = self._model_router.get_chat_model("default")
-        compressed_history = await compress_history(lc_history, llm)
-
-        # 6. Resolve tools
-        tool_names: list[str] = list(agent_config.tools or [])
-        tool_entries = ToolRegistry.get_by_names(tool_names)
-        tools = [e.langchain_tool for e in tool_entries if e.langchain_tool is not None]
-
-        # 7. Build ReAct graph (fresh per request)
-        graph = build_react_graph(llm, tools)
-
-        # 8. Compose initial messages
-        initial_messages = [
-            SystemMessage(content=system_prompt),
-            *compressed_history,
-            HumanMessage(content=message),
-        ]
-
-        # Build LangGraph run config (inject LangFuse handler when available)
-        from baize.core.observability import create_langfuse_handler
-
-        langfuse_handler = create_langfuse_handler()
-        run_config: dict = {
-            "configurable": {"thread_id": str(session.id)},
-            "metadata": {
-                "user_id": str(user_id),
-                "session_id": str(session_id),
-                "agent_id": str(agent_id),
-            },
-        }
-        if langfuse_handler is not None:
-            run_config["callbacks"] = [langfuse_handler]
-
-        tool_call_count = 0
-        current_response = ""
-        _llm_start_time: float = 0.0
-        _tool_start_times: dict[str, float] = {}
-
-        # 9. Stream with timeout guard
         try:
-            async with asyncio.timeout(_CHAT_TIMEOUT):
-                async for event in graph.astream_events(
-                    {
-                        "messages": initial_messages,
-                        "user_id": str(user_id),
-                        "agent_id": str(agent_id),
-                        "shared_memory": resolved_memory.shared_memory,
-                    },
-                    config=run_config,
-                    version="v2",
-                ):
-                    event_type = event.get("event", "")
-
-                    if event_type == "on_chat_model_start":
-                        current_response = ""
-                        _llm_start_time = time.monotonic()
-
-                    elif event_type == "on_chat_model_stream":
-                        chunk = event["data"].get("chunk")
-                        if chunk is not None and hasattr(chunk, "content"):
-                            content = chunk.content
-                            if isinstance(content, str) and content:
-                                current_response += content
-                                yield ChatEvent(type="token", payload={"content": content})
-
-                    elif event_type == "on_chat_model_end":
-                        latency_ms = int((time.monotonic() - _llm_start_time) * 1000)
-                        output = event.get("data", {}).get("output")
-                        usage = getattr(output, "usage_metadata", None) or {}
-                        _slog.debug(
-                            "llm_call",
-                            model=event.get("name", ""),
-                            prompt_tokens=usage.get("input_tokens", 0),
-                            completion_tokens=usage.get("output_tokens", 0),
-                            latency_ms=latency_ms,
-                        )
-
-                    elif event_type == "on_tool_start":
-                        tool_call_count += 1
-                        tool_name = event.get("name", "")
-                        _tool_start_times[tool_name] = time.monotonic()
-                        if tool_call_count > _MAX_TOOL_CALLS:
-                            yield ChatEvent(
-                                type="error",
-                                payload={"message": f"工具调用次数超过上限（{_MAX_TOOL_CALLS}次）。"},
-                            )
-                            return
-                        yield ChatEvent(
-                            type="tool_call",
-                            payload={
-                                "tool": tool_name,
-                                "args": event["data"].get("input", {}),
-                            },
-                        )
-
-                    elif event_type == "on_tool_end":
-                        tool_name = event.get("name", "")
-                        start = _tool_start_times.pop(tool_name, time.monotonic())
-                        duration_ms = int((time.monotonic() - start) * 1000)
-                        output = event["data"].get("output", "")
-                        output_str = output.content if hasattr(output, "content") else str(output)
-                        _slog.info("tool_call", tool_name=tool_name, duration_ms=duration_ms)
-                        yield ChatEvent(
-                            type="tool_result",
-                            payload={"tool": tool_name, "result": output_str},
-                        )
-
-        except TimeoutError:
-            yield ChatEvent(type="error", payload={"message": "对话超时（120秒），请稍后重试。"})
-            return
+            await context_node.run(ctx)
         except Exception as exc:
-            _slog.error(
-                "agent_error",
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-                user_id=str(user_id),
-                session_id=str(session_id),
-                agent_id=str(agent_id),
-            )
+            collector.finalize(error=str(exc))
+            yield ChatEvent(type="error", payload={"message": f"上下文准备失败: {exc}"})
+            return
+
+        # 6. Node: ReAct execution (streams ChatEvents, reports LLM/tool spans)
+        react_node = ReactNode(llm=llm, agent_config=agent_config)
+        try:
+            async for chat_event in react_node.stream(ctx):
+                yield chat_event
+                if chat_event.type == "error":
+                    return
+        except Exception as exc:
+            collector.finalize(output=ctx.results.get("response", ""), error=str(exc))
+            _slog.error("agent_error", error_type=type(exc).__name__,
+                        error_message=str(exc), user_id=str(user_id),
+                        session_id=str(session_id), agent_id=str(agent_id))
             raise
 
-        # 10. Persist messages
-        user_msg = await self._session_svc.save_message(
+        # 7. Node: Persist messages
+        persist_node = PersistNode(
+            session_svc=self._session_svc,
             session_id=session.id,
             user_id=user_id,
-            role=MessageRole.user,
-            content=message,
         )
-        await self._session_svc.save_message(
-            session_id=session.id,
-            user_id=user_id,
-            role=MessageRole.assistant,
-            content=current_response,
-        )
+        await persist_node.run(ctx)
 
         yield ChatEvent(
             type="done",
-            payload={"session_id": str(session.id), "message_id": str(user_msg.id)},
+            payload={
+                "session_id": str(session.id),
+                "message_id": ctx.results.get("message_id", ""),
+            },
         )
+
+        # 8. Finalize trace
+        collector.finalize(output=ctx.results.get("response", ""))

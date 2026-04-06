@@ -1,7 +1,10 @@
-"""System Prompt layered assembler for the Agent module.
+"""System Prompt layered assembler.
 
 Layers (in order):
-  1. Agent system prompt — rendered as a Jinja2 template (user_name, current_date).
+  1a. Soul — identity / persona layer from ``agent_config.prompts.soul``.
+  1b. Behavior — task / behavior instructions from ``agent_config.prompts.behavior``.
+      Both layers are Jinja2 templates rendered with (user_name, current_date).
+      Either layer may be absent.
   2. User preferences — formatted snippet from :func:`build_user_preferences_prompt`.
   3. Tool descriptions — name + description for each registered tool listed in
      ``agent_config.tools``; unregistered tools are silently ignored.
@@ -19,7 +22,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from baize.agent.tools import ToolRegistry
-from baize.user.prompt import build_user_preferences_prompt
+from baize.context.user_prefs import build_user_preferences_prompt
 
 if TYPE_CHECKING:
     from baize.agent.models import AgentConfig
@@ -82,9 +85,14 @@ def assemble_system_prompt(
         memories = []
 
     # ------------------------------------------------------------------
-    # Layer 1: Agent system prompt (Jinja2)
+    # Layer 1a + 1b: Soul and Behavior (both optional, from prompts dict)
     # ------------------------------------------------------------------
-    layer_agent = _render_system_prompt(agent_config.system_prompt, user.name)
+    prompts = agent_config.prompts or {}
+    soul_raw = prompts.get("soul") if isinstance(prompts, dict) else None
+    behavior_raw = prompts.get("behavior") if isinstance(prompts, dict) else None
+
+    layer_soul = _render_system_prompt(soul_raw, user.name) if soul_raw else ""
+    layer_behavior = _render_system_prompt(behavior_raw, user.name) if behavior_raw else ""
 
     # ------------------------------------------------------------------
     # Layer 2: User preferences
@@ -118,12 +126,12 @@ def assemble_system_prompt(
     # ------------------------------------------------------------------
     # Token budget: truncate preferences if total exceeds limit
     # ------------------------------------------------------------------
-    parts = [layer_agent, layer_prefs_section, layer_tools, layer_memories]
+    parts = [layer_soul, layer_behavior, layer_prefs_section, layer_tools, layer_memories]
     full_text = "\n\n".join(p for p in parts if p)
 
     if _count_tokens(full_text) > TOKEN_LIMIT and layer_prefs_section:
         truncated_prefs_text = _truncate_to_tokens(layer_prefs_section, PREFS_TOKEN_LIMIT)
-        parts = [layer_agent, truncated_prefs_text, layer_tools, layer_memories]
+        parts = [layer_soul, layer_behavior, truncated_prefs_text, layer_tools, layer_memories]
         full_text = "\n\n".join(p for p in parts if p)
 
     return full_text

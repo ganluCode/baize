@@ -25,6 +25,7 @@ class UserModel(Base):
     avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_key_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     preferences: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    default_agent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

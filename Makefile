@@ -34,7 +34,7 @@ export-openapi:
 	REDIS_URL=redis://localhost:6379/0 \
 	ADMIN_API_KEY=dummy \
 	SECRET_KEY=dummy \
-	uv run python -c "import json; from baize.main import app; open('docs/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
+	uv run python -c "import json; from baize.main import app; open('docs/baize.json', 'w').write(json.dumps(app.openapi(), indent=2))"
 
 docker-up:
 	docker compose -f docker/docker-compose.yml up -d

@@ -14,8 +14,6 @@ class PreferencesSchema(BaseModel):
     language: str = "zh"
     focus_areas: list[str] = []
     custom_instructions: str | None = None
-    auto_memory_recall: bool = True
-    shared_memory: bool = False
 
 
 class UserResponse(BaseModel):

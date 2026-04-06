@@ -29,8 +29,6 @@ class SessionResponse(BaseModel):
     agent_id: uuid.UUID
     title: str | None
     status: SessionStatus
-    auto_memory_recall: bool | None
-    shared_memory: bool | None
     created_at: datetime
     updated_at: datetime
 

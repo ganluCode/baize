@@ -66,36 +66,54 @@ class Container:
 
         self.task_service: TaskEngineService = TaskEngineService(engine=self.db)
 
+        # Metadata registry
+        from baize.metadata import create_metadata_registry
+
+        self.metadata_registry = create_metadata_registry()
+
     def _init_memory_service(self, config: Settings) -> MemoryServiceInterface | None:
         """Attempt to initialise the configured memory backend.
 
-        Returns None (with a warning) when the memory config is absent or
-        incomplete, so the application can still start without a memory service.
+        Supports two providers:
+        - ``openmemory``: HTTP calls to a running OpenMemory server (preferred).
+          Requires ``OPENMEMORY_BASE_URL`` env var.
+        - ``mem0``: Embedded mem0 SDK (requires ``mem0`` sub-config in config.yaml).
+
+        Returns None (with a warning) when config is incomplete.
         """
-        if config.memory.provider != "mem0":
-            logger.warning(
-                "Unsupported memory provider '%s'; memory service disabled.",
-                config.memory.provider,
-            )
-            return None
+        provider = config.memory.provider
 
-        if config.memory.mem0 is None:
-            logger.warning(
-                "Memory provider is 'mem0' but no 'mem0' sub-config was found; "
-                "memory service disabled."
-            )
-            return None
+        # --- OpenMemory (HTTP adapter) ---
+        if provider == "openmemory" or config.openmemory_base_url:
+            if not config.openmemory_base_url:
+                logger.warning("Memory provider is 'openmemory' but OPENMEMORY_BASE_URL is not set; memory service disabled.")
+                return None
+            try:
+                from baize.memory.adapters.openmemory import OpenMemoryAdapter
 
-        try:
-            from baize.memory.adapters.mem0 import Mem0Adapter
+                return OpenMemoryAdapter(
+                    base_url=config.openmemory_base_url,
+                    api_key=config.openmemory_api_key,
+                )
+            except Exception:
+                logger.warning("Failed to initialise OpenMemoryAdapter; memory service disabled.", exc_info=True)
+                return None
 
-            return Mem0Adapter(config=config.memory, llm_provider=self.provider_factory)
-        except Exception:
-            logger.warning(
-                "Failed to initialise Mem0Adapter; memory service disabled.",
-                exc_info=True,
-            )
-            return None
+        # --- Mem0 SDK (embedded) ---
+        if provider == "mem0":
+            if config.memory.mem0 is None:
+                logger.warning("Memory provider is 'mem0' but no 'mem0' sub-config was found; memory service disabled.")
+                return None
+            try:
+                from baize.memory.adapters.mem0 import Mem0Adapter
+
+                return Mem0Adapter(config=config.memory, llm_provider=self.provider_factory)
+            except Exception:
+                logger.warning("Failed to initialise Mem0Adapter; memory service disabled.", exc_info=True)
+                return None
+
+        logger.warning("Unsupported memory provider '%s'; memory service disabled.", provider)
+        return None
 
     async def close(self) -> None:
         """Release resources held by this container."""

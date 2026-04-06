@@ -38,6 +38,7 @@ async def seed_admin_user(engine: AsyncEngine | None = None) -> None:
             return
 
         username = os.environ.get("ADMIN_USERNAME", "admin")
+        email = os.environ.get("ADMIN_EMAIL", f"{username}@localhost")
 
         password = os.environ.get("ADMIN_PASSWORD")
         password_generated = password is None
@@ -53,7 +54,7 @@ async def seed_admin_user(engine: AsyncEngine | None = None) -> None:
         api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
         admin = UserModel(
-            email=f"{username}@localhost",
+            email=email,
             name=username,
             password=hashed_password,
             role="admin",

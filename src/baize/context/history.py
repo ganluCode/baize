@@ -80,11 +80,6 @@ async def compress_history(
 
     # --- Attempt LLM summarisation ---
     try:
-        history_text = "\n".join(
-            f"{'用户' if isinstance(m, type(messages[0]) if not isinstance(m, AIMessage) else AIMessage) else '助手'}: "
-            f"{m.content}"
-            for m in earlier
-        )
         # Build a plain history string (role: content)
         lines = []
         for m in earlier:

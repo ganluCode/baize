@@ -82,16 +82,34 @@ def _make_service(
     session_svc: SessionService | None = None,
     memory_svc: MemoryServiceInterface | None = None,
     model_router=None,
+    context_svc=None,
 ) -> AgentService:
     if model_router is None:
         mr = MagicMock()
         mr.get_chat_model.return_value = MagicMock()
         model_router = mr
+    if context_svc is None:
+        from baize.context.memory_config import ResolvedMemoryConfig
+        from baize.context.schemas import PreparedContext
+
+        ctx = MagicMock()
+        ctx.prepare = AsyncMock(
+            return_value=PreparedContext(
+                system_prompt="sys",
+                history=[],
+                resolved_memory=ResolvedMemoryConfig(
+                    auto_memory_recall=True, shared_memory=True
+                ),
+                memories=[],
+            )
+        )
+        context_svc = ctx
     return AgentService(
         agent_config_service=agent_config_svc or AsyncMock(spec=AgentConfigService),
         session_service=session_svc or AsyncMock(spec=SessionService),
         memory_service=memory_svc,
         model_router=model_router,
+        context_service=context_svc,
     )
 
 
@@ -185,8 +203,6 @@ async def test_chat_auto_creates_session_when_not_found() -> None:
 
     with (
         patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.compress_history", new=AsyncMock(return_value=[])),
-        patch("baize.agent.service.assemble_system_prompt", return_value="system"),
         patch("baize.agent.service.ToolRegistry"),
     ):
         await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
@@ -194,103 +210,8 @@ async def test_chat_auto_creates_session_when_not_found() -> None:
     session_svc.create_session.assert_called_once_with(user_id, agent_id)
 
 
-# ---------------------------------------------------------------------------
-# memory recall
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_chat_recalls_memory_when_auto_memory_recall_enabled() -> None:
-    """chat() calls memory_service.search() when auto_memory_recall=True."""
-    user_id = uuid.uuid4()
-    agent_id = uuid.uuid4()
-    user = _make_user(user_id)
-    agent = _make_agent(user_id=user_id, agent_id=agent_id, auto_memory_recall=True)
-    session = _make_session(user_id, agent_id)
-
-    agent_config_svc = AsyncMock(spec=AgentConfigService)
-    agent_config_svc.get.return_value = agent
-
-    session_svc = AsyncMock(spec=SessionService)
-    session_svc.get_session.return_value = session
-    session_svc.get_history.return_value = []
-    session_svc.save_message = AsyncMock(return_value=MagicMock(id=uuid.uuid4()))
-
-    memory_svc = AsyncMock(spec=MemoryServiceInterface)
-    _now = datetime(2026, 1, 1, 0, 0, 0)
-    memory_svc.search.return_value = [
-        Memory(id="1", content="Test memory", user_id="u-1", created_at=_now, updated_at=_now),
-    ]
-
-    mock_graph = MagicMock()
-    mock_graph.astream_events = _make_simple_stream(
-        {"event": "on_chat_model_start", "name": "agent", "data": {}},
-        {"event": "on_chat_model_stream", "name": "agent", "data": {"chunk": AIMessageChunk(content="Hi")}},
-    )
-
-    model_router = MagicMock()
-    model_router.get_chat_model.return_value = MagicMock()
-    svc = _make_service(
-        agent_config_svc=agent_config_svc,
-        session_svc=session_svc,
-        memory_svc=memory_svc,
-        model_router=model_router,
-    )
-
-    with (
-        patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.compress_history", new=AsyncMock(return_value=[])),
-        patch("baize.agent.service.assemble_system_prompt", return_value="system"),
-        patch("baize.agent.service.ToolRegistry"),
-    ):
-        await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
-
-    memory_svc.search.assert_called_once_with("hello", top_k=5)
-
-
-@pytest.mark.asyncio
-async def test_chat_does_not_recall_memory_when_disabled() -> None:
-    """chat() does NOT call memory_service.search() when auto_memory_recall=False."""
-    user_id = uuid.uuid4()
-    agent_id = uuid.uuid4()
-    user = _make_user(user_id)
-    agent = _make_agent(user_id=user_id, agent_id=agent_id, auto_memory_recall=False)
-    session = _make_session(user_id, agent_id)
-
-    agent_config_svc = AsyncMock(spec=AgentConfigService)
-    agent_config_svc.get.return_value = agent
-
-    session_svc = AsyncMock(spec=SessionService)
-    session_svc.get_session.return_value = session
-    session_svc.get_history.return_value = []
-    session_svc.save_message = AsyncMock(return_value=MagicMock(id=uuid.uuid4()))
-
-    memory_svc = AsyncMock(spec=MemoryServiceInterface)
-
-    mock_graph = MagicMock()
-    mock_graph.astream_events = _make_simple_stream(
-        {"event": "on_chat_model_start", "name": "agent", "data": {}},
-        {"event": "on_chat_model_stream", "name": "agent", "data": {"chunk": AIMessageChunk(content="Hi")}},
-    )
-
-    model_router = MagicMock()
-    model_router.get_chat_model.return_value = MagicMock()
-    svc = _make_service(
-        agent_config_svc=agent_config_svc,
-        session_svc=session_svc,
-        memory_svc=memory_svc,
-        model_router=model_router,
-    )
-
-    with (
-        patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.compress_history", new=AsyncMock(return_value=[])),
-        patch("baize.agent.service.assemble_system_prompt", return_value="system"),
-        patch("baize.agent.service.ToolRegistry"),
-    ):
-        await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
-
-    memory_svc.search.assert_not_called()
+# Memory recall is now handled by ContextService; see tests/context/test_service.py
+# for tests covering auto_memory_recall behavior.
 
 
 # ---------------------------------------------------------------------------
@@ -329,8 +250,6 @@ async def test_chat_yields_error_when_tool_call_limit_exceeded() -> None:
 
     with (
         patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.compress_history", new=AsyncMock(return_value=[])),
-        patch("baize.agent.service.assemble_system_prompt", return_value="system"),
         patch("baize.agent.service.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
@@ -377,8 +296,6 @@ async def test_chat_saves_user_and_assistant_messages_after_completion() -> None
 
     with (
         patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.compress_history", new=AsyncMock(return_value=[])),
-        patch("baize.agent.service.assemble_system_prompt", return_value="system"),
         patch("baize.agent.service.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
@@ -435,8 +352,6 @@ async def test_chat_yields_error_on_timeout() -> None:
 
     with (
         patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.compress_history", new=AsyncMock(return_value=[])),
-        patch("baize.agent.service.assemble_system_prompt", return_value="system"),
         patch("baize.agent.service.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))

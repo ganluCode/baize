@@ -36,12 +36,12 @@ class TestNoCompressionNeeded:
 
     @pytest.mark.asyncio
     async def test_returns_original_when_under_limit(self):
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         messages = _make_messages(4)
 
-        with patch("baize.agent.context._count_tokens_for_messages", return_value=100):
+        with patch("baize.context.history._count_tokens_for_messages", return_value=100):
             result = await compress_history(messages, llm, max_tokens=8000, keep_turns=6)
 
         assert result is messages
@@ -49,7 +49,7 @@ class TestNoCompressionNeeded:
 
     @pytest.mark.asyncio
     async def test_empty_messages_returns_empty(self):
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         result = await compress_history([], llm, max_tokens=8000, keep_turns=6)
@@ -58,12 +58,12 @@ class TestNoCompressionNeeded:
 
     @pytest.mark.asyncio
     async def test_exactly_at_limit_returns_original(self):
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         messages = _make_messages(4)
 
-        with patch("baize.agent.context._count_tokens_for_messages", return_value=8000):
+        with patch("baize.context.history._count_tokens_for_messages", return_value=8000):
             result = await compress_history(messages, llm, max_tokens=8000, keep_turns=6)
 
         assert result is messages
@@ -79,7 +79,7 @@ class TestCompressionLogic:
 
     @pytest.mark.asyncio
     async def test_keeps_recent_turns(self):
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         llm.ainvoke = AsyncMock(return_value=AIMessage(content="summary text"))
@@ -95,7 +95,7 @@ class TestCompressionLogic:
             # First call (full list) → over limit; subsequent calls → under
             return 9000 if call_count == 1 else 500
 
-        with patch("baize.agent.context._count_tokens_for_messages", side_effect=fake_count):
+        with patch("baize.context.history._count_tokens_for_messages", side_effect=fake_count):
             result = await compress_history(messages, llm, max_tokens=8000, keep_turns=3)
 
         # First element should be the summary SystemMessage
@@ -106,7 +106,7 @@ class TestCompressionLogic:
 
     @pytest.mark.asyncio
     async def test_summary_inserted_as_system_message(self):
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         llm.ainvoke = AsyncMock(return_value=AIMessage(content="this is the summary"))
@@ -120,7 +120,7 @@ class TestCompressionLogic:
             call_count += 1
             return 9000 if call_count == 1 else 100
 
-        with patch("baize.agent.context._count_tokens_for_messages", side_effect=fake_count):
+        with patch("baize.context.history._count_tokens_for_messages", side_effect=fake_count):
             result = await compress_history(messages, llm, max_tokens=8000, keep_turns=2)
 
         assert isinstance(result[0], SystemMessage)
@@ -129,7 +129,7 @@ class TestCompressionLogic:
     @pytest.mark.asyncio
     async def test_fewer_messages_than_keep_turns_keeps_all(self):
         """If all messages fit within keep_turns*2, no summarisation is attempted."""
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         messages = _make_messages(4)  # 4 messages, keep_turns=6 → keep_turns*2=12 > 4
@@ -141,7 +141,7 @@ class TestCompressionLogic:
             call_count += 1
             return 9000 if call_count == 1 else 500
 
-        with patch("baize.agent.context._count_tokens_for_messages", side_effect=fake_count):
+        with patch("baize.context.history._count_tokens_for_messages", side_effect=fake_count):
             result = await compress_history(messages, llm, max_tokens=8000, keep_turns=6)
 
         # No earlier messages to summarise; LLM may or may not be called
@@ -159,7 +159,7 @@ class TestFallbackOnLLMFailure:
 
     @pytest.mark.asyncio
     async def test_fallback_drops_messages_until_under_limit(self):
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         llm.ainvoke = AsyncMock(side_effect=Exception("LLM error"))
@@ -170,7 +170,7 @@ class TestFallbackOnLLMFailure:
             # Over limit when more than 4 messages
             return 9000 if len(msgs) > 4 else 100
 
-        with patch("baize.agent.context._count_tokens_for_messages", side_effect=fake_count):
+        with patch("baize.context.history._count_tokens_for_messages", side_effect=fake_count):
             result = await compress_history(messages, llm, max_tokens=8000, keep_turns=6)
 
         # Should have dropped enough messages to go under limit
@@ -182,7 +182,7 @@ class TestFallbackOnLLMFailure:
     async def test_fallback_logs_warning(self, caplog):
         import logging
 
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         llm.ainvoke = AsyncMock(side_effect=RuntimeError("timeout"))
@@ -198,8 +198,8 @@ class TestFallbackOnLLMFailure:
             return 9000 if call_count <= 2 else 100
 
         # keep_turns=2 → keep_count=4 < 10, so LLM is invoked and raises RuntimeError
-        with patch("baize.agent.context._count_tokens_for_messages", side_effect=fake_count):
-            with caplog.at_level(logging.WARNING, logger="baize.agent.context"):
+        with patch("baize.context.history._count_tokens_for_messages", side_effect=fake_count):
+            with caplog.at_level(logging.WARNING, logger="baize.context.history"):
                 await compress_history(messages, llm, max_tokens=8000, keep_turns=2)
 
         assert any("fallback" in record.message.lower() or "warning" in record.levelname.lower()
@@ -208,7 +208,7 @@ class TestFallbackOnLLMFailure:
     @pytest.mark.asyncio
     async def test_no_llm_call_when_nothing_to_summarize(self):
         """With keep_turns large enough to cover all messages, LLM never called."""
-        from baize.agent.context import compress_history
+        from baize.context.history import compress_history
 
         llm = AsyncMock()
         messages = _make_messages(4)
@@ -220,7 +220,7 @@ class TestFallbackOnLLMFailure:
             call_count += 1
             return 9000 if call_count == 1 else 100
 
-        with patch("baize.agent.context._count_tokens_for_messages", side_effect=fake_count):
+        with patch("baize.context.history._count_tokens_for_messages", side_effect=fake_count):
             await compress_history(messages, llm, max_tokens=8000, keep_turns=100)
 
         llm.ainvoke.assert_not_called()
@@ -234,7 +234,7 @@ class TestTokenCounting:
     """_count_tokens_for_messages uses tiktoken cl100k_base."""
 
     def test_counts_tokens_in_messages(self):
-        from baize.agent.context import _count_tokens_for_messages
+        from baize.context.history import _count_tokens_for_messages
 
         msgs = [HumanMessage(content="hello world"), AIMessage(content="hi")]
         count = _count_tokens_for_messages(msgs)
@@ -242,6 +242,6 @@ class TestTokenCounting:
         assert isinstance(count, int)
 
     def test_empty_messages_returns_zero(self):
-        from baize.agent.context import _count_tokens_for_messages
+        from baize.context.history import _count_tokens_for_messages
 
         assert _count_tokens_for_messages([]) == 0
