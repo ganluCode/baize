@@ -1,0 +1,303 @@
+"""Mem0 adapter for the Baize memory service.
+
+Wraps the ``mem0`` library's ``Memory`` class behind
+:class:`~baize.memory.interface.MemoryServiceInterface`, translating between
+Baize's provider-reference format (``'供应商名/模型ID'``) and the configuration
+dict expected by ``mem0.Memory.from_config()``.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+from mem0 import Memory
+
+from baize.llm.provider import ProviderFactory, ProviderNotFoundError, ProviderUnavailableError
+from baize.memory.config import MemoryConfig
+from baize.memory.interface import MemoryItem, MemoryServiceInterface
+
+logger = logging.getLogger(__name__)
+
+
+class MemoryProviderConfigError(ValueError):
+    """Raised when the memory adapter cannot resolve a required LLM/embedder provider."""
+
+
+class Mem0Adapter(MemoryServiceInterface):
+    """Adapts :class:`~baize.memory.interface.MemoryServiceInterface` to the Mem0 backend.
+
+    Args:
+        config: Top-level memory configuration (must include a ``mem0`` sub-config).
+        llm_provider: Initialised :class:`~baize.llm.provider.ProviderFactory` used
+            to resolve provider references to ``base_url`` / ``api_key`` pairs.
+
+    Raises:
+        MemoryProviderConfigError: If the ``mem0`` sub-config is absent, a provider
+            reference is malformed, or the referenced provider is not available.
+    """
+
+    def __init__(self, config: MemoryConfig, llm_provider: ProviderFactory) -> None:
+        if config.mem0 is None:
+            raise MemoryProviderConfigError(
+                "Mem0Adapter requires a 'mem0' sub-config in MemoryConfig, but none was provided."
+            )
+
+        mem0_cfg: dict[str, Any] = {}
+
+        if config.mem0.llm:
+            provider_name, model_id = self._parse_provider_ref(config.mem0.llm.provider)
+            base_url, api_key = self._resolve_credentials(llm_provider, provider_name, "llm")
+            llm_config: dict[str, Any] = {
+                "model": model_id,
+                "api_key": api_key,
+                "openai_base_url": base_url,
+            }
+            if config.mem0.llm.temperature is not None:
+                llm_config["temperature"] = config.mem0.llm.temperature
+            mem0_cfg["llm"] = {"provider": "openai", "config": llm_config}
+
+        if config.mem0.embedder:
+            provider_name, model_id = self._parse_provider_ref(config.mem0.embedder.provider)
+            base_url, api_key = self._resolve_credentials(llm_provider, provider_name, "embedder")
+            mem0_cfg["embedder"] = {
+                "provider": "openai",
+                "config": {
+                    "model": model_id,
+                    "api_key": api_key,
+                    "openai_base_url": base_url,
+                },
+            }
+
+        if config.mem0.vector_store:
+            mem0_cfg["vector_store"] = {
+                "provider": config.mem0.vector_store.provider,
+                "config": config.mem0.vector_store.config,
+            }
+
+        self._client: Memory = Memory.from_config(mem0_cfg)
+        logger.debug("Mem0Adapter initialised with config keys: %s", list(mem0_cfg.keys()))
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_provider_ref(ref: str) -> tuple[str, str]:
+        """Parse a ``'供应商名/模型ID'`` string into ``(provider_name, model_id)``.
+
+        Args:
+            ref: Provider reference string, e.g. ``'doubao/doubao-pro-256k'``.
+
+        Returns:
+            Tuple of ``(provider_name, model_id)``.
+
+        Raises:
+            MemoryProviderConfigError: If the string does not contain exactly one
+                ``'/'``, or either part is empty.
+        """
+        parts = ref.split("/", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise MemoryProviderConfigError(
+                f"Invalid provider reference '{ref}': expected '供应商名/模型ID' format "
+                "(e.g. 'doubao/doubao-pro-256k')."
+            )
+        return parts[0], parts[1]
+
+    @staticmethod
+    def _resolve_credentials(
+        llm_provider: ProviderFactory,
+        provider_name: str,
+        role: str,
+    ) -> tuple[str, str]:
+        """Look up ``base_url`` and ``api_key`` for *provider_name*.
+
+        Args:
+            llm_provider: Factory to query.
+            provider_name: Name as defined in the LLM configuration.
+            role: Human-readable role label (``'llm'`` or ``'embedder'``) used in
+                error messages.
+
+        Returns:
+            Tuple of ``(base_url, api_key)``.
+
+        Raises:
+            MemoryProviderConfigError: With a descriptive message when the provider
+                is not found or is unavailable.
+        """
+        try:
+            return llm_provider.get_provider_info(provider_name)
+        except ProviderNotFoundError:
+            raise MemoryProviderConfigError(
+                f"Memory {role} config references provider '{provider_name}', but that provider "
+                "is not defined in the LLM configuration. Check your settings."
+            ) from None
+        except ProviderUnavailableError:
+            raise MemoryProviderConfigError(
+                f"Memory {role} config references provider '{provider_name}', but that provider "
+                "is unavailable (API key environment variable is not set)."
+            ) from None
+
+    # ------------------------------------------------------------------
+    # Private mapping helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime:
+        """Coerce *value* to a timezone-aware datetime.
+
+        Accepts a :class:`datetime` (naive or aware) or an ISO-8601 string.
+        Naive datetimes are assumed to be UTC.
+        """
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=UTC)
+            return value
+        if isinstance(value, str):
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=UTC)
+            return dt
+        # Fallback: use current UTC time
+        return datetime.now(tz=UTC)
+
+    @staticmethod
+    def _map_item(raw: dict[str, Any]) -> MemoryItem:
+        """Map a mem0 result dict to a :class:`MemoryItem`.
+
+        mem0 uses ``memory`` for the text content.  Baize metadata keys
+        ``session_id`` and ``shared`` are stored inside ``raw["metadata"]``.
+        """
+        meta: dict[str, Any] = raw.get("metadata") or {}
+        session_id: str | None = meta.get("session_id")
+        shared: bool = meta.get("shared", True)
+
+        # Remaining metadata (exclude Baize-internal keys)
+        extra_meta = {k: v for k, v in meta.items() if k not in ("session_id", "shared")}
+
+        return MemoryItem(
+            id=raw["id"],
+            content=raw.get("memory", ""),
+            user_id=raw.get("user_id", ""),
+            agent_id=raw.get("agent_id"),
+            session_id=session_id,
+            shared=shared,
+            metadata=extra_meta or None,
+            score=raw.get("score"),
+            created_at=Mem0Adapter._parse_datetime(raw.get("created_at", datetime.now(tz=UTC))),
+            updated_at=Mem0Adapter._parse_datetime(raw.get("updated_at", datetime.now(tz=UTC))),
+        )
+
+    # ------------------------------------------------------------------
+    # MemoryServiceInterface implementation
+    # ------------------------------------------------------------------
+
+    async def add(
+        self,
+        content: str,
+        user_id: str,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+        shared: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Store a memory and return its unique ID.
+
+        Raises:
+            ValueError: If *content* is empty.
+        """
+        if not content:
+            raise ValueError("content must not be empty")
+
+        merged_meta: dict[str, Any] = dict(metadata or {})
+        merged_meta["shared"] = shared
+        if session_id is not None:
+            merged_meta["session_id"] = session_id
+
+        result = self._client.add(
+            content,
+            user_id=user_id,
+            agent_id=agent_id,
+            metadata=merged_meta,
+            infer=False,
+        )
+        memory_id: str = result["results"][0]["id"]
+        logger.debug("Memory added: id=%s user_id=%s", memory_id, user_id)
+        return memory_id
+
+    async def search(
+        self,
+        query: str,
+        user_id: str,
+        agent_id: str | None = None,
+        top_k: int = 5,
+    ) -> list[MemoryItem]:
+        """Search memories by semantic similarity with visibility filtering.
+
+        Returns shared memories always; when *agent_id* is provided, also
+        returns that agent's private (``shared=False``) memories.
+
+        Results are sorted by score descending.
+
+        Args:
+            query: The search query string.
+            user_id: Owner of the memories to search.
+            agent_id: When specified, private memories for this agent are included.
+            top_k: Maximum number of results to request from mem0.
+
+        Returns:
+            List of :class:`MemoryItem` sorted by score descending.
+        """
+        result = self._client.search(query, user_id=user_id, limit=top_k)
+        raw_items: list[dict[str, Any]] = result.get("results", [])
+
+        filtered: list[MemoryItem] = []
+        for raw in raw_items:
+            item = self._map_item(raw)
+            if item.shared:
+                filtered.append(item)
+            elif agent_id is not None and item.agent_id == agent_id:
+                filtered.append(item)
+
+        filtered.sort(key=lambda m: m.score if m.score is not None else 0.0, reverse=True)
+        return filtered
+
+    async def get(self, memory_id: str) -> MemoryItem | None:
+        """Retrieve a single memory by its ID.
+
+        Returns:
+            The :class:`MemoryItem`, or *None* if not found.
+        """
+        raw = self._client.get(memory_id)
+        if raw is None:
+            return None
+        return self._map_item(raw)
+
+    async def delete(self, memory_id: str) -> bool:
+        """Delete a memory by its ID.
+
+        Returns:
+            *True* if deleted, *False* if the memory does not exist.
+        """
+        try:
+            self._client.delete(memory_id)
+            return True
+        except ValueError:
+            return False
+
+    async def list_all(
+        self,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[MemoryItem]:
+        """List memories for a user with limit/offset pagination.
+
+        mem0's ``get_all`` does not natively support offset, so we fetch
+        ``offset + limit`` records and slice client-side.
+        """
+        result = self._client.get_all(user_id=user_id, limit=offset + limit)
+        raw_items: list[dict[str, Any]] = result.get("results", [])
+        page = raw_items[offset : offset + limit]
+        return [self._map_item(item) for item in page]

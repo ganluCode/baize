@@ -1,0 +1,99 @@
+version: "3.8"
+
+services:
+  # ============================================================
+  # 基础设施
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: baize-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: baize
+      POSTGRES_PASSWORD: baize123
+      POSTGRES_DB: baize
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U baize"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: baize-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # Open WebUI — 前端对话界面
+  # ============================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: baize-webui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    environment:
+      # 关闭内置 Ollama 连接（我们不用本地模型）
+      OLLAMA_BASE_URL: ""
+      # 指向 Baize 后端的 OpenAI 兼容端点
+      # 开发模式：host.docker.internal 指向宿主机（本地跑的 uvicorn）
+      # 生产模式：改为 http://baize-server:8000/v1
+      OPENAI_API_BASE_URL: http://host.docker.internal:8000/v1
+      OPENAI_API_KEY: "${ADMIN_API_KEY:-baize-dev-key}"
+      # 启用用户信息转发（后续 Pipe 可用）
+      ENABLE_FORWARD_USER_INFO_HEADERS: "true"
+      # 启用 Responses API 有状态模式（服务端管会话历史）
+      ENABLE_RESPONSES_API_STATEFUL: "true"
+      # 关闭注册（单用户使用）
+      ENABLE_SIGNUP: "false"
+    volumes:
+      - webui_data:/app/backend/data
+    depends_on:
+      - baize-server
+
+  # ============================================================
+  # Baize 后端（开发模式，挂载源码热重载）
+  # ============================================================
+  # 暂时注释 — 开发阶段建议本地直接跑 uvicorn
+  # 等后端稳定后取消注释
+  #
+  # baize-server:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: baize-server
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     DATABASE_URL: postgresql+asyncpg://baize:baize123@postgres:5432/baize
+  #     REDIS_URL: redis://redis:6379/0
+  #     ADMIN_API_KEY: ${ADMIN_API_KEY:-baize-dev-key}
+  #     SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+  #     LOG_LEVEL: DEBUG
+  #   volumes:
+  #     - ./src:/app/src
+  #     - ./config:/app/config
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  webui_data:

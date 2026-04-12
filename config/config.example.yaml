@@ -1,0 +1,65 @@
+app:
+  name: Baize
+  version: "0.1.0"
+  debug: ${DEBUG}
+  secret_key: ${SECRET_KEY}
+
+llm:
+  providers:
+    - name: doubao
+      type: openai
+      base_url: "https://ark.cn-beijing.volces.com/api/v3"
+      api_key: ${DOUBAO_API_KEY}
+      models:
+        - id: doubao-pro-256k
+          usage:
+            - chat
+
+    - name: claude
+      type: anthropic
+      base_url: "https://api.anthropic.com"
+      api_key: ${ANTHROPIC_API_KEY}
+      models:
+        - id: claude-sonnet-4-6
+          usage:
+            - chat
+            - reasoning
+
+    - name: newapi
+      type: openai
+      base_url: "http://newapi.local:3000/v1"
+      api_key: ${NEWAPI_KEY}
+      models:
+        - id: text-embedding-3-small
+          usage:
+            - embedding
+
+agents:
+  - name: default
+    models:
+      chat: doubao/doubao-pro-256k
+      reasoning: claude/claude-sonnet-4-6
+      embedding: newapi/text-embedding-3-small
+    prompt_file: config/prompts/default_agent.md
+
+memory:
+  provider: mem0
+  config:
+    vector_store:
+      provider: qdrant
+      config:
+        host: localhost
+        port: 6333
+        collection_name: baize_memories
+    llm:
+      provider: openai
+      config:
+        model: doubao-pro-256k
+        api_key: ${DOUBAO_API_KEY}
+        base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    embedder:
+      provider: openai
+      config:
+        model: text-embedding-3-small
+        api_key: ${NEWAPI_KEY}
+        base_url: "http://newapi.local:3000/v1"
