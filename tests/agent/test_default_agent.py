@@ -39,17 +39,21 @@ def _make_user(user_id: uuid.UUID) -> UserModel:
 
 
 def _make_default_agent_response(system_prompt: str = "You are 白泽（Baize）...") -> AgentResponse:
+    from baize.agent.schemas import AgentPrompts, GuardrailsConfig, MemoryConfig, ToolsConfig
+
     return AgentResponse(
         id=_DEFAULT_AGENT_ID,
         user_id=_NEW_USER_ID,
         name="白泽（Baize）",
         description="你的个人 AI 助理",
-        system_prompt=system_prompt,
-        tools=["save_memory", "search_memory", "create_task", "list_tasks", "complete_task"],
+        agent_type="chat",
+        prompts=AgentPrompts(behavior=system_prompt),
+        tools=ToolsConfig(builtin=["save_memory", "search_memory", "create_task", "list_tasks", "complete_task"]),
         model_config=None,
-        auto_memory_recall=None,
-        shared_memory=None,
-        is_default=True,
+        sub_agents=None,
+        memory_config=MemoryConfig(),
+        guardrails=GuardrailsConfig(),
+        is_enabled=True,
         created_at=_NOW,
         updated_at=_NOW,
     )
@@ -84,7 +88,7 @@ async def client_new_user(app, mock_agent_svc, new_user):
 
 
 async def test_new_user_has_default_agent_in_list(client_new_user, mock_agent_svc):
-    """GET /api/v1/agents for a new user returns exactly one is_default=True agent."""
+    """GET /api/v1/agents for a new user returns at least one agent."""
     default_agent = _make_default_agent_response()
     mock_agent_svc.list.return_value = [default_agent]
 
@@ -93,12 +97,13 @@ async def test_new_user_has_default_agent_in_list(client_new_user, mock_agent_sv
     assert response.status_code == 200
     agents = response.json()
     assert len(agents) >= 1
-    default_agents = [a for a in agents if a["is_default"] is True]
+    # Default agent is identified by name
+    default_agents = [a for a in agents if a["name"] == "白泽（Baize）"]
     assert len(default_agents) == 1
 
 
 async def test_new_user_default_agent_has_non_empty_system_prompt(client_new_user, mock_agent_svc):
-    """The default agent's system_prompt must not be empty."""
+    """The default agent's prompts must not be empty."""
     default_agent = _make_default_agent_response(system_prompt="You are 白泽（Baize）, your personal AI assistant.")
     mock_agent_svc.list.return_value = [default_agent]
 
@@ -106,13 +111,13 @@ async def test_new_user_default_agent_has_non_empty_system_prompt(client_new_use
 
     assert response.status_code == 200
     agents = response.json()
-    default_agents = [a for a in agents if a["is_default"] is True]
+    default_agents = [a for a in agents if a["name"] == "白泽（Baize）"]
     assert len(default_agents) == 1
-    assert default_agents[0]["system_prompt"]  # non-empty string is truthy
+    assert default_agents[0]["prompts"]  # non-empty prompts object is truthy
 
 
 async def test_new_user_default_agent_is_default_true(client_new_user, mock_agent_svc):
-    """The agent returned for a new user has is_default=True."""
+    """The agent returned for a new user is enabled and has the default name."""
     default_agent = _make_default_agent_response()
     mock_agent_svc.list.return_value = [default_agent]
 
@@ -120,7 +125,7 @@ async def test_new_user_default_agent_is_default_true(client_new_user, mock_agen
 
     assert response.status_code == 200
     agents = response.json()
-    assert any(a["is_default"] is True for a in agents)
+    assert any(a["name"] == "白泽（Baize）" for a in agents)
 
 
 # ---------------------------------------------------------------------------

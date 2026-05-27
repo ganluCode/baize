@@ -14,6 +14,7 @@ from baize.user.models import Base
 class SessionStatus(enum.StrEnum):
     active = "active"
     archived = "archived"
+    deleted = "deleted"
 
 
 class MessageRole(enum.StrEnum):
@@ -62,6 +63,7 @@ class ChatMessageModel(Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_calls: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     token_usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

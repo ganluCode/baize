@@ -46,52 +46,59 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATAB
 # ---------------------------------------------------------------------------
 
 
-async def _create_schema() -> None:
+async def _ensure_schema() -> None:
+    """Ensure tables exist (create_all is idempotent, never drops)."""
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await engine.dispose()
 
 
-async def _drop_schema() -> None:
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# Module-scoped sync fixture: schema lifecycle
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(scope="module", autouse=True)
 def module_schema():
-    """Create the test schema before this module; drop it after."""
-    asyncio.run(_create_schema())
+    """Ensure schema exists before this module (no teardown, no drop)."""
+    asyncio.run(_ensure_schema())
     yield
-    asyncio.run(_drop_schema())
 
 
 # ---------------------------------------------------------------------------
-# Function-scoped fixtures — one engine per test avoids event-loop conflicts
+# Function-scoped fixtures
 # ---------------------------------------------------------------------------
+
+# Track IDs created during each test for targeted cleanup
+_test_created_ids: dict[str, list[str]] = {
+    "chat_messages": [],
+    "sessions": [],
+    "agent_configs": [],
+    "system_users": [],
+}
+
+
+def _track_id(table: str, row_id) -> None:
+    """Register an ID for cleanup after the test."""
+    _test_created_ids[table].append(str(row_id))
 
 
 @pytest_asyncio.fixture
 async def db():
-    """Yield a clean DB session; truncate all tables before each test."""
+    """Yield a DB session; clean up only test-created rows after each test."""
+    # Reset tracking
+    for key in _test_created_ids:
+        _test_created_ids[key].clear()
+
     engine = create_async_engine(TEST_DATABASE_URL)
     session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
     async with session_factory() as session:
-        await session.execute(
-            text(
-                "TRUNCATE chat_messages, sessions, system_users, agent_configs"
-                " RESTART IDENTITY CASCADE"
-            )
-        )
-        await session.commit()
         yield session
+
+        # Targeted cleanup: delete only rows created during this test
+        # Order matters: children first to avoid constraint issues
+        for table in ["chat_messages", "sessions", "agent_configs", "system_users"]:
+            ids = _test_created_ids[table]
+            if ids:
+                placeholders = ", ".join(f"'{i}'" for i in ids)
+                await session.execute(text(f"DELETE FROM {table} WHERE id IN ({placeholders})"))
+        await session.commit()
     await engine.dispose()
 
 
@@ -113,6 +120,7 @@ async def _create_user(db: AsyncSession, api_key: str, name: str = "testuser") -
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    _track_id("system_users", user.id)
     return user
 
 
@@ -138,22 +146,24 @@ async def _create_agent(db: AsyncSession, user_id: uuid.UUID | None = None) -> u
                 "is_active": True,
             },
         )
+        _track_id("system_users", tmp_id)
         user_id = tmp_id
 
     agent_id = uuid.uuid4()
     await db.execute(
         text(
-            "INSERT INTO agent_configs (id, user_id, name, system_prompt, is_default)"
-            " VALUES (:id, :user_id, :name, :system_prompt, :is_default)"
+            "INSERT INTO agent_configs (id, user_id, name, agent_type, is_enabled)"
+            " VALUES (:id, :user_id, :name, :agent_type, :is_enabled)"
         ),
         {
             "id": str(agent_id),
             "user_id": str(user_id),
             "name": "Test Agent",
-            "system_prompt": "You are a helpful assistant.",
-            "is_default": False,
+            "agent_type": "chat",
+            "is_enabled": True,
         },
     )
+    _track_id("agent_configs", agent_id)
     await db.commit()
     return agent_id
 
@@ -179,6 +189,7 @@ async def _create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
+    _track_id("sessions", session.id)
     return session
 
 
@@ -199,6 +210,7 @@ async def _create_message(
     db.add(msg)
     await db.commit()
     await db.refresh(msg)
+    _track_id("chat_messages", msg.id)
     return msg
 
 

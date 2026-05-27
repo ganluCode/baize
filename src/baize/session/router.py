@@ -103,35 +103,46 @@ async def get_session(
 
 
 @session_router.patch("/{session_id}", response_model=SessionResponse)
-async def archive_session(
+async def update_session(
     session_id: uuid.UUID,
     body: SessionUpdate,
     current_user: UserModel = Depends(get_current_user),
     svc: SessionService = Depends(get_session_service),
 ) -> SessionResponse:
-    """Archive a session owned by the authenticated user.
+    """Update a session (title and/or status).
 
     Returns:
-        SessionResponse with updated status.
+        SessionResponse with updated fields.
 
     Raises:
-        HTTPException: 401 if not authenticated, 403 if not owner, 422 if invalid status.
+        HTTPException: 401 if not authenticated, 403 if not owner.
     """
-    session = await svc.archive_session(session_id=session_id, user_id=current_user.id)
+    session = await svc.update_session(
+        session_id=session_id,
+        user_id=current_user.id,
+        title=body.title,
+        status=body.status,
+    )
     return SessionResponse.model_validate(session)
 
 
 @session_router.get("/{session_id}/messages", response_model=MessageListResponse)
 async def list_messages(
     session_id: uuid.UUID,
-    limit: int = 50,
+    limit: int = 20,
     offset: int = 0,
+    before: uuid.UUID | None = None,
     current_user: UserModel = Depends(get_current_user),
     svc: SessionService = Depends(get_session_service),
 ) -> MessageListResponse:
     """Return paginated messages for a session owned by the authenticated user.
 
-    Messages are ordered by created_at ascending.
+    Supports two pagination modes:
+    - **before**: Cursor-based — return ``limit`` messages older than this message ID.
+      Used for "load earlier" when scrolling up in chat UI.
+    - **offset**: Traditional offset pagination.
+
+    Messages are always returned in chronological order (oldest first).
 
     Returns:
         MessageListResponse with items and total count.
@@ -144,6 +155,7 @@ async def list_messages(
         user_id=current_user.id,
         limit=limit,
         offset=offset,
+        before=before,
     )
     return MessageListResponse(
         items=[ChatMessageResponse.model_validate(m) for m in items],

@@ -58,6 +58,7 @@ class SessionRepository:
             select(SessionModel)
             .where(SessionModel.user_id == user_id)
             .where(SessionModel.agent_id == agent_id)
+            .where(SessionModel.status != SessionStatus.deleted)
         )
         if status is not None:
             base = base.where(SessionModel.status == status)
@@ -133,6 +134,7 @@ class ChatMessageRepository:
         user_id: uuid.UUID,
         role: MessageRole,
         content: str,
+        thinking: str | None = None,
         tool_calls: dict | None = None,
         tool_name: str | None = None,
         token_usage: dict | None = None,
@@ -143,6 +145,7 @@ class ChatMessageRepository:
             user_id=user_id,
             role=role,
             content=content,
+            thinking=thinking,
             tool_calls=tool_calls,
             tool_name=tool_name,
             token_usage=token_usage,
@@ -157,13 +160,23 @@ class ChatMessageRepository:
         session_id: uuid.UUID,
         limit: int = 50,
         offset: int = 0,
+        before: uuid.UUID | None = None,
     ) -> tuple[list[ChatMessageModel], int]:
-        """Return paginated messages for a session, ordered by created_at asc.
+        """Return paginated messages for a session.
+
+        Supports two pagination modes:
+        - **before (cursor)**: Return ``limit`` messages older than the given
+          message ID, ordered ascending. Used for "load earlier" in chat UI.
+        - **offset**: Traditional offset pagination, ordered ascending.
+
+        In both modes the returned list is sorted by ``created_at ASC``
+        (oldest first) so the frontend can render top-to-bottom.
 
         Args:
             session_id: The session to query messages for.
             limit: Maximum number of records to return.
-            offset: Number of records to skip.
+            offset: Number of records to skip (ignored when ``before`` is set).
+            before: Cursor — return messages created before this message ID.
 
         Returns:
             A tuple of (items, total_count).
@@ -175,10 +188,34 @@ class ChatMessageRepository:
         )
         total = count_result.scalar_one()
 
-        items_result = await self._session.execute(
-            base.order_by(ChatMessageModel.created_at.asc()).offset(offset).limit(limit)
-        )
-        items = list(items_result.scalars().all())
+        if before is not None:
+            # Cursor-based: get the timestamp of the cursor message
+            cursor_result = await self._session.execute(
+                select(ChatMessageModel.created_at).where(ChatMessageModel.id == before)
+            )
+            cursor_ts = cursor_result.scalar_one_or_none()
+            if cursor_ts is not None:
+                # Get `limit` messages before the cursor, then sort ascending
+                query = (
+                    base.where(ChatMessageModel.created_at < cursor_ts)
+                    .order_by(ChatMessageModel.created_at.desc())
+                    .limit(limit)
+                )
+                items_result = await self._session.execute(query)
+                items = list(reversed(items_result.scalars().all()))
+            else:
+                items = []
+        else:
+            # No cursor: return the latest `limit` messages (for initial load)
+            # Query DESC then reverse to get ASC order
+            query = (
+                base.order_by(ChatMessageModel.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            items_result = await self._session.execute(query)
+            items = list(reversed(items_result.scalars().all()))
+
         return items, total
 
     async def get_recent(

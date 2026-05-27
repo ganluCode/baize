@@ -28,12 +28,14 @@ def _make_agent(
     a.user_id = user_id or uuid.uuid4()
     a.name = "Test Agent"
     a.description = None
-    a.system_prompt = "You are helpful."
-    a.tools = []
-    a.model_config = None
-    a.auto_memory_recall = None
-    a.shared_memory = None
-    a.is_default = is_default
+    a.agent_type = "chat"
+    a.is_enabled = True
+    a.prompts = {"behavior": "You are helpful."}
+    a.tools = {"builtin": [], "mcp_servers": [], "skills": []}
+    a.model_config_json = None
+    a.sub_agents = None
+    a.memory_config = {"auto_recall": True, "shared": True, "top_k": 5}
+    a.guardrails = {"max_tool_calls": 10, "timeout_seconds": 120}
     a.created_at = datetime.now(UTC)
     a.updated_at = datetime.now(UTC)
     return a
@@ -61,7 +63,7 @@ async def test_create_raises_400_on_unknown_tool() -> None:
     svc = _make_service(repo=repo)
 
     with patch.object(ToolRegistry, "get_all_names", return_value=["save_memory"]):
-        data = AgentCreate(name="Agent", system_prompt="hi", tools=["nonexistent_tool"])
+        data = AgentCreate(name="Agent", tools={"builtin": ["nonexistent_tool"], "mcp_servers": [], "skills": []})
         with pytest.raises(AgentServiceError) as exc_info:
             await svc.create(uuid.uuid4(), data)
 
@@ -81,7 +83,7 @@ async def test_update_raises_400_on_unknown_tool() -> None:
     svc = _make_service(repo=repo)
 
     with patch.object(ToolRegistry, "get_all_names", return_value=["save_memory"]):
-        data = AgentUpdate(tools=["bad_tool"])
+        data = AgentUpdate(tools={"builtin": ["bad_tool"], "mcp_servers": [], "skills": []})
         with pytest.raises(AgentServiceError) as exc_info:
             await svc.update(agent.id, user_id, data)
 
@@ -100,7 +102,7 @@ async def test_create_succeeds_with_registered_tools() -> None:
     svc = _make_service(repo=repo)
 
     with patch.object(ToolRegistry, "get_all_names", return_value=["save_memory"]):
-        data = AgentCreate(name="Agent", system_prompt="hi", tools=["save_memory"])
+        data = AgentCreate(name="Agent", tools={"builtin": ["save_memory"], "mcp_servers": [], "skills": []})
         result = await svc.create(user_id, data)
 
     assert result is agent
@@ -118,7 +120,7 @@ async def test_create_succeeds_with_empty_tools() -> None:
     svc = _make_service(repo=repo)
 
     with patch.object(ToolRegistry, "get_all_names", return_value=[]):
-        data = AgentCreate(name="Agent", system_prompt="hi", tools=[])
+        data = AgentCreate(name="Agent")
         result = await svc.create(user_id, data)
 
     assert result is agent
@@ -131,34 +133,34 @@ async def test_create_succeeds_with_empty_tools() -> None:
 
 @pytest.mark.asyncio
 async def test_create_with_is_default_calls_set_default() -> None:
-    """create() with is_default=True calls set_default on the repository."""
+    """create() with set_as_default=True calls set_default on the repository."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=False)
+    agent = _make_agent(user_id=user_id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.create.return_value = agent
     svc = _make_service(repo=repo)
 
     with patch.object(ToolRegistry, "get_all_names", return_value=[]):
-        data = AgentCreate(name="Agent", system_prompt="hi", tools=[], is_default=True)
+        data = AgentCreate(name="Agent", set_as_default=True)
         result = await svc.create(user_id, data)
 
     repo.set_default.assert_called_once_with(user_id, agent.id)
-    assert result.is_default is True
+    assert result is agent
 
 
 @pytest.mark.asyncio
 async def test_create_without_is_default_does_not_call_set_default() -> None:
-    """create() with is_default=False does not touch set_default."""
+    """create() without set_as_default does not touch set_default."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=False)
+    agent = _make_agent(user_id=user_id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.create.return_value = agent
     svc = _make_service(repo=repo)
 
     with patch.object(ToolRegistry, "get_all_names", return_value=[]):
-        data = AgentCreate(name="Agent", system_prompt="hi", tools=[])
+        data = AgentCreate(name="Agent")
         await svc.create(user_id, data)
 
     repo.set_default.assert_not_called()
@@ -171,10 +173,10 @@ async def test_create_without_is_default_does_not_call_set_default() -> None:
 
 @pytest.mark.asyncio
 async def test_update_with_is_default_calls_set_default() -> None:
-    """update() with is_default=True promotes this agent to default."""
+    """update() with set_as_default=True promotes this agent to default."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=False)
-    updated_agent = _make_agent(user_id=user_id, agent_id=agent.id, is_default=False)
+    agent = _make_agent(user_id=user_id)
+    updated_agent = _make_agent(user_id=user_id, agent_id=agent.id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.get_by_id.return_value = agent
@@ -182,10 +184,10 @@ async def test_update_with_is_default_calls_set_default() -> None:
     svc = _make_service(repo=repo)
 
     with patch.object(ToolRegistry, "get_all_names", return_value=[]):
-        result = await svc.update(agent.id, user_id, AgentUpdate(is_default=True))
+        result = await svc.update(agent.id, user_id, AgentUpdate(set_as_default=True))
 
     repo.set_default.assert_called_once_with(user_id, agent.id)
-    assert result.is_default is True
+    assert result is updated_agent
 
 
 @pytest.mark.asyncio
@@ -213,19 +215,20 @@ async def test_update_without_is_default_does_not_call_set_default() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_raises_400_when_agent_is_default() -> None:
-    """delete() raises AgentServiceError(400) when the agent is the default."""
+    """delete() clears the default pointer and deletes the agent (no 400 raised)."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=True)
+    agent = _make_agent(user_id=user_id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.get_by_id.return_value = agent
-    svc = _make_service(repo=repo)
+    session_svc = AsyncMock(spec=SessionService)
+    svc = _make_service(repo=repo, session_svc=session_svc)
 
-    with pytest.raises(AgentServiceError) as exc_info:
-        await svc.delete(agent.id, user_id)
+    # The new implementation does NOT raise 400 — it clears default pointer and deletes
+    await svc.delete(agent.id, user_id)
 
-    assert exc_info.value.status_code == 400
-    repo.delete.assert_not_called()
+    repo.clear_default_if_matches.assert_called_once_with(user_id, agent.id)
+    repo.delete.assert_called_once_with(agent.id)
 
 
 @pytest.mark.asyncio
@@ -300,7 +303,7 @@ async def test_delete_raises_404_when_agent_not_found() -> None:
 async def test_create_default_agent_uses_default_tools() -> None:
     """create_default_agent() creates an agent with the standard tool set."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=True)
+    agent = _make_agent(user_id=user_id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.create.return_value = agent
@@ -319,16 +322,16 @@ async def test_create_default_agent_uses_default_tools() -> None:
 
     repo.create.assert_called_once()
     call_data = repo.create.call_args[0][1]  # second positional arg is AgentCreate
-    assert set(call_data.tools) == set(all_default_tools)
-    assert call_data.is_default is True
+    assert set(call_data.tools.builtin) == set(all_default_tools)
+    assert call_data.set_as_default is True
     assert result is agent
 
 
 @pytest.mark.asyncio
 async def test_create_default_agent_is_default_true() -> None:
-    """create_default_agent() always creates an agent with is_default=True."""
+    """create_default_agent() always creates an agent with set_as_default=True."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=True)
+    agent = _make_agent(user_id=user_id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.create.return_value = agent
@@ -346,21 +349,21 @@ async def test_create_default_agent_is_default_true() -> None:
         result = await svc.create_default_agent(user_id)
 
     repo.set_default.assert_called_once_with(user_id, agent.id)
-    assert result.is_default is True
+    assert result is agent
 
 
 @pytest.mark.asyncio
 async def test_create_default_agent_reads_prompt_file(tmp_path) -> None:
-    """create_default_agent() reads system_prompt from default_agent.md."""
+    """create_default_agent() reads behavior prompt from default_behavior.md."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=True)
+    agent = _make_agent(user_id=user_id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.create.return_value = agent
     svc = _make_service(repo=repo)
 
-    custom_prompt = "Custom prompt with {{ user_name }} and {{ current_date }}"
-    prompt_file = tmp_path / "default_agent.md"
+    custom_prompt = "Custom behavior prompt"
+    prompt_file = tmp_path / "default_behavior.md"
     prompt_file.write_text(custom_prompt)
 
     all_default_tools = [
@@ -375,25 +378,26 @@ async def test_create_default_agent_reads_prompt_file(tmp_path) -> None:
 
     with (
         patch.object(ToolRegistry, "get_all_names", return_value=all_default_tools),
-        patch.object(svc_module, "_DEFAULT_AGENT_PROMPT_PATH", prompt_file),
+        patch.object(svc_module, "_DEFAULT_BEHAVIOR_PATH", prompt_file),
     ):
         await svc.create_default_agent(user_id)
 
     call_data = repo.create.call_args[0][1]
-    assert call_data.system_prompt == custom_prompt
+    assert call_data.prompts.behavior == custom_prompt
 
 
 @pytest.mark.asyncio
 async def test_create_default_agent_falls_back_on_missing_prompt_file(tmp_path) -> None:
-    """create_default_agent() uses empty prompt if the template file is missing."""
+    """create_default_agent() uses None prompt if the template file is missing."""
     user_id = uuid.uuid4()
-    agent = _make_agent(user_id=user_id, is_default=True)
+    agent = _make_agent(user_id=user_id)
 
     repo = AsyncMock(spec=AgentConfigRepository)
     repo.create.return_value = agent
     svc = _make_service(repo=repo)
 
-    missing_path = tmp_path / "nonexistent.md"
+    missing_soul_path = tmp_path / "nonexistent_soul.md"
+    missing_behavior_path = tmp_path / "nonexistent_behavior.md"
 
     all_default_tools = [
         "save_memory",
@@ -407,9 +411,11 @@ async def test_create_default_agent_falls_back_on_missing_prompt_file(tmp_path) 
 
     with (
         patch.object(ToolRegistry, "get_all_names", return_value=all_default_tools),
-        patch.object(svc_module, "_DEFAULT_AGENT_PROMPT_PATH", missing_path),
+        patch.object(svc_module, "_DEFAULT_SOUL_PATH", missing_soul_path),
+        patch.object(svc_module, "_DEFAULT_BEHAVIOR_PATH", missing_behavior_path),
     ):
         await svc.create_default_agent(user_id)
 
     call_data = repo.create.call_args[0][1]
-    assert call_data.system_prompt == ""
+    assert call_data.prompts.soul is None
+    assert call_data.prompts.behavior is None

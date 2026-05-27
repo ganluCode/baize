@@ -37,12 +37,14 @@ def _make_agent_response(**kwargs) -> AgentResponse:
         user_id=_USER_ID,
         name="Test Agent",
         description=None,
-        system_prompt="You are helpful.",
-        tools=["save_memory"],
+        agent_type="chat",
+        prompts={"behavior": "You are helpful."},
+        tools={"builtin": ["save_memory"], "mcp_servers": [], "skills": []},
         model_config=None,
-        auto_memory_recall=None,
-        shared_memory=None,
-        is_default=False,
+        sub_agents=None,
+        memory_config={"auto_recall": True, "shared": True, "top_k": 5},
+        guardrails={"max_tool_calls": 10, "timeout_seconds": 120},
+        is_enabled=True,
         created_at=_NOW,
         updated_at=_NOW,
     )
@@ -100,11 +102,11 @@ async def client_no_auth(app, mock_svc):
 
 
 async def test_create_agent_returns_201(client_auth, mock_svc):
-    mock_svc.create.return_value = _make_agent_response(is_default=False)
+    mock_svc.create.return_value = _make_agent_response()
 
     response = await client_auth.post(
         "/api/v1/agents",
-        json={"name": "Test Agent", "system_prompt": "You are helpful.", "tools": ["save_memory"]},
+        json={"name": "Test Agent", "prompts": {"behavior": "You are helpful."}},
     )
 
     assert response.status_code == 201
@@ -119,7 +121,7 @@ async def test_create_agent_calls_service_with_user_id(client_auth, mock_svc, re
 
     await client_auth.post(
         "/api/v1/agents",
-        json={"name": "A", "system_prompt": "p", "tools": []},
+        json={"name": "A"},
     )
 
     call_kwargs = mock_svc.create.call_args
@@ -129,7 +131,7 @@ async def test_create_agent_calls_service_with_user_id(client_auth, mock_svc, re
 async def test_create_agent_without_auth_returns_401(client_no_auth):
     response = await client_no_auth.post(
         "/api/v1/agents",
-        json={"name": "A", "system_prompt": "p", "tools": []},
+        json={"name": "A"},
     )
     assert response.status_code == 401
 
@@ -139,7 +141,7 @@ async def test_create_agent_invalid_tools_returns_400(client_auth, mock_svc):
 
     response = await client_auth.post(
         "/api/v1/agents",
-        json={"name": "A", "system_prompt": "p", "tools": ["bad_tool"]},
+        json={"name": "A", "tools": {"builtin": ["bad_tool"], "mcp_servers": [], "skills": []}},
     )
 
     assert response.status_code == 400
@@ -254,7 +256,7 @@ async def test_update_agent_invalid_tools_returns_400(client_auth, mock_svc):
 
     response = await client_auth.put(
         f"/api/v1/agents/{_AGENT_ID}",
-        json={"tools": ["bad_tool"]},
+        json={"tools": {"builtin": ["bad_tool"], "mcp_servers": [], "skills": []}},
     )
 
     assert response.status_code == 400

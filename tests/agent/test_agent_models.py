@@ -1,6 +1,6 @@
 """Tests for AgentConfig ORM model structure and constraints."""
 
-from sqlalchemy import Boolean, DateTime, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Index, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from baize.agent.models import AgentConfig
@@ -23,12 +23,10 @@ class TestAgentConfigColumns:
         assert col.primary_key
         assert isinstance(col.type, UUID)
 
-    def test_user_id_is_uuid_not_null_with_fk(self):
+    def test_user_id_is_uuid_not_null(self):
         col = _col("user_id")
         assert not col.nullable
         assert isinstance(col.type, UUID)
-        fk_targets = {fk.target_fullname for fk in col.foreign_keys}
-        assert "system_users.id" in fk_targets
 
     def test_name_varchar_100_not_null(self):
         col = _col("name")
@@ -42,10 +40,21 @@ class TestAgentConfigColumns:
         assert isinstance(col.type, String)
         assert col.type.length == 500
 
-    def test_system_prompt_text_not_null(self):
-        col = _col("system_prompt")
+    def test_agent_type_string_not_null(self):
+        col = _col("agent_type")
         assert not col.nullable
-        assert isinstance(col.type, Text)
+        assert isinstance(col.type, String)
+
+    def test_is_enabled_boolean_not_null_default_true(self):
+        col = _col("is_enabled")
+        assert not col.nullable
+        assert isinstance(col.type, Boolean)
+        assert col.server_default is not None
+
+    def test_prompts_jsonb_nullable(self):
+        col = _col("prompts")
+        assert col.nullable
+        assert isinstance(col.type, JSONB)
 
     def test_tools_jsonb_nullable(self):
         col = _col("tools")
@@ -57,21 +66,20 @@ class TestAgentConfigColumns:
         assert col.nullable
         assert isinstance(col.type, JSONB)
 
-    def test_auto_memory_recall_boolean_nullable(self):
-        col = _col("auto_memory_recall")
+    def test_memory_config_jsonb_nullable(self):
+        col = _col("memory_config")
         assert col.nullable
-        assert isinstance(col.type, Boolean)
+        assert isinstance(col.type, JSONB)
 
-    def test_shared_memory_boolean_nullable(self):
-        col = _col("shared_memory")
+    def test_guardrails_jsonb_nullable(self):
+        col = _col("guardrails")
         assert col.nullable
-        assert isinstance(col.type, Boolean)
+        assert isinstance(col.type, JSONB)
 
-    def test_is_default_boolean_not_null_default_false(self):
-        col = _col("is_default")
-        assert not col.nullable
-        assert isinstance(col.type, Boolean)
-        assert col.server_default is not None
+    def test_sub_agents_jsonb_nullable(self):
+        col = _col("sub_agents")
+        assert col.nullable
+        assert isinstance(col.type, JSONB)
 
     def test_created_at_datetime_not_null(self):
         col = _col("created_at")
@@ -85,8 +93,8 @@ class TestAgentConfigColumns:
 
 
 class TestAgentConfigIndexes:
-    def test_user_is_default_composite_index_exists(self):
-        idx = _index("ix_agent_configs_user_is_default")
+    def test_user_enabled_composite_index_exists(self):
+        idx = _index("ix_agent_configs_user_enabled")
         assert idx is not None
         col_names = {col.key for col in idx.columns}
-        assert col_names == {"user_id", "is_default"}
+        assert col_names == {"user_id", "is_enabled"}

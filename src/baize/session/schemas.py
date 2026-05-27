@@ -16,9 +16,10 @@ class SessionCreate(BaseModel):
 
 
 class SessionUpdate(BaseModel):
-    """Request body for updating a session — only archiving is supported."""
+    """Request body for updating a session (title and/or status)."""
 
-    status: Literal["archived"]
+    title: str | None = Field(default=None, max_length=200)
+    status: Literal["active", "archived"] | None = None
 
 
 class SessionResponse(BaseModel):
@@ -50,6 +51,7 @@ class ChatMessageResponse(BaseModel):
     user_id: uuid.UUID
     role: MessageRole
     content: str
+    thinking: str | None = None
     tool_calls: dict[str, Any] | None
     tool_name: str | None
     token_usage: dict[str, Any] | None

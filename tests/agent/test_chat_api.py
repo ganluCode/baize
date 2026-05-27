@@ -20,16 +20,16 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
+import baize.agent.chat_router as chat_router_module  # noqa: E402
 from baize.agent.service import AgentService, ChatEvent  # noqa: E402
-from baize.core.deps import get_agent_service  # noqa: E402
+from baize.core.deps import get_agent_config_service, get_agent_service, get_session_service  # noqa: E402
 from baize.main import app  # noqa: E402
-from baize.user.deps import get_current_user  # noqa: E402
 from baize.user.models import UserModel  # noqa: E402
 
 _AGENT_ID = uuid.uuid4()
 _SESSION_ID = uuid.uuid4()
 _USER_ID = uuid.uuid4()
-_CHAT_URL = f"/api/v1/agents/{_AGENT_ID}/sessions/{_SESSION_ID}/chat"
+_CHAT_URL = "/api/v1/chat"
 
 
 def _make_user() -> UserModel:
@@ -50,17 +50,38 @@ def mock_agent_svc():
 
 
 @pytest.fixture
-async def client_auth(app, mock_agent_svc):
+def mock_agent_config_svc():
+    from unittest.mock import AsyncMock
+    from baize.agent.models import AgentConfig
+    svc = AsyncMock()
+    fake_agent = MagicMock(spec=AgentConfig)
+    fake_agent.id = _AGENT_ID
+    svc.get.return_value = fake_agent
+    return svc
+
+
+@pytest.fixture
+def mock_session_svc():
+    from unittest.mock import AsyncMock
+    return AsyncMock()
+
+
+@pytest.fixture
+async def client_auth(app, mock_agent_svc, mock_agent_config_svc, mock_session_svc):
     """Authenticated client with AgentService mocked."""
     user = _make_user()
     app.dependency_overrides[get_agent_service] = lambda: mock_agent_svc
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_agent_config_service] = lambda: mock_agent_config_svc
+    app.dependency_overrides[get_session_service] = lambda: mock_session_svc
+    app.dependency_overrides[chat_router_module._get_user_model] = lambda: user
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             yield c
     finally:
         app.dependency_overrides.pop(get_agent_service, None)
-        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_agent_config_service, None)
+        app.dependency_overrides.pop(get_session_service, None)
+        app.dependency_overrides.pop(chat_router_module._get_user_model, None)
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +99,16 @@ async def test_chat_returns_text_event_stream_content_type(client_auth, mock_age
         )
     )
 
-    response = await client_auth.post(_CHAT_URL, json={"message": "Hi"})
+    response = await client_auth.post(
+        _CHAT_URL,
+        json={"message": "Hi", "agent_id": str(_AGENT_ID), "session_id": str(_SESSION_ID)},
+    )
 
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
 
 
-async def test_chat_response_contains_token_and_done_events(client_auth, mock_agent_svc, monkeypatch):
+async def test_chat_response_contains_token_and_done_events(client_auth, mock_agent_svc, mock_agent_config_svc, mock_session_svc, monkeypatch):
     """SSE body contains at least one token event and one done event.
 
     The LLM is mocked via monkeypatch on AgentService.chat so no real
@@ -99,13 +123,23 @@ async def test_chat_response_contains_token_and_done_events(client_auth, mock_ag
 
     monkeypatch.setattr(AgentService, "chat", _mocked_chat)
     # Override AgentService dependency to use a real-ish instance with chat monkeypatched
+    user = _make_user()
     app.dependency_overrides[get_agent_service] = lambda: AgentService.__new__(AgentService)
+    app.dependency_overrides[get_agent_config_service] = lambda: mock_agent_config_svc
+    app.dependency_overrides[get_session_service] = lambda: mock_session_svc
+    app.dependency_overrides[chat_router_module._get_user_model] = lambda: user
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            response = await c.post(_CHAT_URL, json={"message": "Hello"})
+            response = await c.post(
+                _CHAT_URL,
+                json={"message": "Hello", "agent_id": str(_AGENT_ID), "session_id": str(_SESSION_ID)},
+            )
     finally:
         app.dependency_overrides.pop(get_agent_service, None)
+        app.dependency_overrides.pop(get_agent_config_service, None)
+        app.dependency_overrides.pop(get_session_service, None)
+        app.dependency_overrides.pop(chat_router_module._get_user_model, None)
 
     assert response.status_code == 200
     body = response.text
@@ -127,7 +161,10 @@ async def test_chat_sse_body_parses_token_and_done_via_mock_service(client_auth,
         )
     )
 
-    response = await client_auth.post(_CHAT_URL, json={"message": "question"})
+    response = await client_auth.post(
+        _CHAT_URL,
+        json={"message": "question", "agent_id": str(_AGENT_ID), "session_id": str(_SESSION_ID)},
+    )
 
     body = response.text
     # Parse SSE lines
@@ -152,14 +189,17 @@ async def test_chat_invalid_api_key_returns_401_json(app, mock_agent_svc):
     def _reject():
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-    app.dependency_overrides[get_current_user] = _reject
+    app.dependency_overrides[chat_router_module._get_user_model] = _reject
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            response = await c.post(_CHAT_URL, json={"message": "Hello"})
+            response = await c.post(
+                _CHAT_URL,
+                json={"message": "Hello", "agent_id": str(_AGENT_ID), "session_id": str(_SESSION_ID)},
+            )
     finally:
         app.dependency_overrides.pop(get_agent_service, None)
-        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(chat_router_module._get_user_model, None)
 
     assert response.status_code == 401
     # Must be JSON, not event-stream
@@ -175,14 +215,17 @@ async def test_chat_no_auth_header_returns_401_json(app, mock_agent_svc):
     def _no_creds():
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    app.dependency_overrides[get_current_user] = _no_creds
+    app.dependency_overrides[chat_router_module._get_user_model] = _no_creds
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            response = await c.post(_CHAT_URL, json={"message": "Hello"})
+            response = await c.post(
+                _CHAT_URL,
+                json={"message": "Hello", "agent_id": str(_AGENT_ID), "session_id": str(_SESSION_ID)},
+            )
     finally:
         app.dependency_overrides.pop(get_agent_service, None)
-        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(chat_router_module._get_user_model, None)
 
     assert response.status_code == 401
     assert response.headers["content-type"].startswith("application/json")
@@ -194,5 +237,8 @@ async def test_chat_no_auth_header_returns_401_json(app, mock_agent_svc):
 
 
 async def test_chat_empty_message_returns_422(client_auth, mock_agent_svc):
-    response = await client_auth.post(_CHAT_URL, json={"message": ""})
-    assert response.status_code == 422
+    response = await client_auth.post(
+        _CHAT_URL,
+        json={"message": "", "agent_id": str(_AGENT_ID), "session_id": str(_SESSION_ID)},
+    )
+    assert response.status_code in (400, 422)

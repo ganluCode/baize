@@ -1,0 +1,214 @@
+### ============================================================
+### Baize API 测试（PyCharm / VS Code REST Client）
+### 使用前先运行「登录」获取 JWT，或直接用 API Key
+### ============================================================
+
+@host = http://localhost:8000
+@apiKey = bz-_ipAHus6VVAl-K71UKzu50FU4CoYt8kWRGRm_0U3Xcg
+
+
+### ──────────────── 健康检查 ────────────────
+
+### 健康检查
+GET {{host}}/health
+
+### ──────────────── 认证 ────────────────
+
+### 登录（获取 JWT）
+POST {{host}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "login": "admin",
+  "password": "baize@2026"
+}
+
+> {%
+client.global.set("jwt", response.body.access_token);
+%}
+
+### ──────────────── 用户 ────────────────
+
+### 查看当前用户
+GET {{host}}/api/v1/users/me
+Authorization: Bearer {{jwt}}
+
+### 用户列表（admin）
+GET {{host}}/api/v1/users
+Authorization: Bearer {{jwt}}
+
+### ──────────────── LLM Provider ────────────────
+
+### 查看可用 LLM Provider
+GET {{host}}/api/v1/llm/providers
+Authorization: Bearer {{apiKey}}
+
+### ──────────────── 智能体管理 ────────────────
+
+### 创建默认智能体
+POST {{host}}/api/v1/agents
+Authorization: Bearer {{jwt}}
+Content-Type: application/json
+
+{
+  "name": "白泽",
+  "description": "通用个人助理",
+  "prompts": {
+    "soul": "你是白泽（Baize），用户的个人 AI 助理。你博学睿智、细心体贴。",
+    "behavior": "回应简洁直接，主动使用工具帮助用户。使用与用户相同的语言回复。"
+  },
+  "tools": {
+    "builtin": [],
+    "mcp_servers": [],
+    "skills": []
+  },
+  "set_as_default": true
+}
+
+> {%
+client.global.set("agentId", response.body.id);
+%}
+
+### 查看所有智能体
+GET {{host}}/api/v1/agents
+Authorization: Bearer {{jwt}}
+
+### 查看单个智能体
+GET {{host}}/api/v1/agents/{{agentId}}
+Authorization: Bearer {{jwt}}
+
+### 更新智能体
+PUT {{host}}/api/v1/agents/{{agentId}}
+Authorization: Bearer {{jwt}}
+Content-Type: application/json
+
+{
+  "prompts": {
+    "soul": "你是白泽（Baize），一个温暖克制的个人 AI 助理。",
+    "behavior": "今天是 {{ current_date }}。回应简洁直接。"
+  }
+}
+
+### ──────────────── 元数据 API ────────────────
+
+### 查看可用资源列表
+GET {{host}}/api/v1/metadata
+Authorization: Bearer {{jwt}}
+
+### 查看智能体表单元数据
+GET {{host}}/api/v1/metadata/agents
+Authorization: Bearer {{jwt}}
+
+### ──────────────── 原生对话 API ────────────────
+
+### 对话（SSE 流式）— 新会话
+POST {{host}}/api/v1/chat
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "message": "你好，你是谁？"
+}
+
+### 对话（同步 JSON）— 新会话
+POST {{host}}/api/v1/chat/sync
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "message": "1+1等于几？"
+}
+
+> {%
+client.global.set("sessionId", response.body.data.session_id);
+client.global.set("messageId", response.body.data.message_id);
+%}
+
+### 续聊（带 session_id）
+POST {{host}}/api/v1/chat/sync
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "message": "刚刚问了哪些问题？",
+  "session_id": "{{sessionId}}"
+}
+
+### ──────────────── 会话管理 ────────────────
+
+### 查看会话列表
+GET {{host}}/api/v1/agents/{{agentId}}/sessions
+Authorization: Bearer {{jwt}}
+
+### 查看会话消息
+GET {{host}}/api/v1/sessions/{{sessionId}}/messages
+Authorization: Bearer {{jwt}}
+
+### ──────────────── OpenAI 兼容 — Models ────────────────
+
+### 模型列表
+GET {{host}}/v1/models
+Authorization: Bearer {{apiKey}}
+
+### ──────────────── OpenAI 兼容 — Chat Completions ────────────────
+
+### Chat Completions（同步）
+POST {{host}}/v1/chat/completions
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "model": "baize-test",
+  "messages": [
+    {"role": "user", "content": "你好"}
+  ]
+}
+
+### Chat Completions（流式）
+POST {{host}}/v1/chat/completions
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "model": "baize-白泽",
+  "messages": [
+    {"role": "user", "content": "用三句话介绍自己"}
+  ],
+  "stream": true
+}
+
+### ──────────────── OpenAI 兼容 — Responses API ────────────────
+
+### 创建会话
+POST {{host}}/v1/conversations
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{}
+
+> {%
+client.global.set("conversationId", response.body.id);
+%}
+
+### Responses API（同步）
+POST {{host}}/v1/responses
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "model": "baize-白泽",
+  "input": "你好，今天天气怎么样？",
+  "conversation": "{{conversationId}}"
+}
+
+### Responses API（流式）
+POST {{host}}/v1/responses
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "model": "baize-白泽",
+  "input": "续聊：那明天呢？",
+  "conversation": "{{conversationId}}",
+  "stream": true
+}

@@ -130,7 +130,10 @@ async def test_prepare_recalls_memories_when_enabled():
         llm=_make_llm(),
     )
 
-    memory_svc.search.assert_awaited_once_with("query", top_k=3)
+    memory_svc.search.assert_awaited_once()
+    call_args = memory_svc.search.await_args
+    assert call_args.args[0] == "query"
+    assert call_args.kwargs.get("top_k") == 3
     assert result.memories == memories
 
 

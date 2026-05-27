@@ -33,12 +33,14 @@ def _make_agent(
     a.user_id = user_id or uuid.uuid4()
     a.name = "Test Agent"
     a.description = None
-    a.system_prompt = "You are helpful."
-    a.tools = tools or []
-    a.model_config = None
-    a.auto_memory_recall = auto_memory_recall
-    a.shared_memory = None
-    a.is_default = True
+    a.agent_type = "chat"
+    a.is_enabled = True
+    a.prompts = {"behavior": "You are helpful."}
+    a.tools = {"builtin": tools or [], "mcp_servers": [], "skills": []}
+    a.model_config_json = None
+    a.sub_agents = None
+    a.memory_config = {"auto_recall": auto_memory_recall, "shared": True, "top_k": 5}
+    a.guardrails = {"max_tool_calls": 10, "timeout_seconds": 120}
     a.created_at = datetime.now(UTC)
     a.updated_at = datetime.now(UTC)
     return a
@@ -51,8 +53,6 @@ def _make_session(user_id: uuid.UUID, agent_id: uuid.UUID) -> SessionModel:
     s.agent_id = agent_id
     s.title = None
     s.title_gen_attempts = 0
-    s.auto_memory_recall = None
-    s.shared_memory = None
     from baize.session.models import SessionStatus
 
     s.status = SessionStatus.active
@@ -202,8 +202,8 @@ async def test_chat_auto_creates_session_when_not_found() -> None:
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.ToolRegistry"),
+        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
+        patch("baize.agent.nodes.react_node.ToolRegistry"),
     ):
         await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 
@@ -249,8 +249,8 @@ async def test_chat_yields_error_when_tool_call_limit_exceeded() -> None:
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.ToolRegistry"),
+        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
+        patch("baize.agent.nodes.react_node.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 
@@ -295,8 +295,8 @@ async def test_chat_saves_user_and_assistant_messages_after_completion() -> None
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.ToolRegistry"),
+        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
+        patch("baize.agent.nodes.react_node.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 
@@ -351,8 +351,8 @@ async def test_chat_yields_error_on_timeout() -> None:
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.service.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.service.ToolRegistry"),
+        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
+        patch("baize.agent.nodes.react_node.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 

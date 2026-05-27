@@ -30,6 +30,8 @@ class ChatStreamRequest(BaseModel):
     message: str
     agent_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
+    # 深度思考开关：true=开启，false=关闭，省略=用模型默认
+    thinking: bool | None = None
 
 
 async def _get_user_model(
@@ -95,6 +97,7 @@ async def chat_stream(
         user_id=uid,
         message=body.message,
         user=user,
+        thinking=body.thinking,
     )
     return create_sse_response(_safe_chat_stream(chat_iter))
 
@@ -165,6 +168,7 @@ async def chat_sync(
         user_id=uid,
         message=body.message,
         user=user,
+        thinking=body.thinking,
     )
 
     async for event in chat_iter:

@@ -279,7 +279,7 @@ async def test_get_session_calls_service_with_correct_args(client_auth, mock_svc
 
 
 async def test_archive_session_returns_200_with_archived_status(client_auth, mock_svc):
-    mock_svc.archive_session.return_value = _make_session_response(status=SessionStatus.archived)
+    mock_svc.update_session.return_value = _make_session_response(status=SessionStatus.archived)
 
     response = await client_auth.patch(
         f"/api/v1/sessions/{_SESSION_ID}",
@@ -294,7 +294,7 @@ async def test_archive_session_returns_200_with_archived_status(client_auth, moc
 async def test_archive_session_invalid_status_returns_422(client_auth, mock_svc):
     response = await client_auth.patch(
         f"/api/v1/sessions/{_SESSION_ID}",
-        json={"status": "active"},
+        json={"status": "invalid_status"},
     )
 
     assert response.status_code == 422
@@ -303,7 +303,7 @@ async def test_archive_session_invalid_status_returns_422(client_auth, mock_svc)
 async def test_archive_session_wrong_owner_returns_403(client_auth, mock_svc):
     from fastapi import HTTPException
 
-    mock_svc.archive_session.side_effect = HTTPException(status_code=403, detail="Forbidden.")
+    mock_svc.update_session.side_effect = HTTPException(status_code=403, detail="Forbidden.")
 
     response = await client_auth.patch(
         f"/api/v1/sessions/{_SESSION_ID}",
@@ -314,16 +314,18 @@ async def test_archive_session_wrong_owner_returns_403(client_auth, mock_svc):
 
 
 async def test_archive_session_calls_service_with_correct_args(client_auth, mock_svc, regular_user):
-    mock_svc.archive_session.return_value = _make_session_response(status=SessionStatus.archived)
+    mock_svc.update_session.return_value = _make_session_response(status=SessionStatus.archived)
 
     await client_auth.patch(
         f"/api/v1/sessions/{_SESSION_ID}",
         json={"status": "archived"},
     )
 
-    mock_svc.archive_session.assert_awaited_once_with(
+    mock_svc.update_session.assert_awaited_once_with(
         session_id=_SESSION_ID,
         user_id=regular_user.id,
+        title=None,
+        status="archived",
     )
 
 
@@ -439,8 +441,9 @@ async def test_list_messages_default_params(client_auth, mock_svc, regular_user)
     mock_svc.list_messages.assert_awaited_once_with(
         session_id=_SESSION_ID,
         user_id=regular_user.id,
-        limit=50,
+        limit=20,
         offset=0,
+        before=None,
     )
 
 

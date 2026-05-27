@@ -47,15 +47,19 @@ def _agent_resp(agent_id: uuid.UUID, user_id: uuid.UUID, **kwargs) -> AgentRespo
         user_id=user_id,
         name="Test Agent",
         description=None,
-        system_prompt="You are helpful.",
-        tools=["save_memory"],
+        agent_type="chat",
+        prompts={"behavior": "You are helpful."},
+        tools={"builtin": ["save_memory"], "mcp_servers": [], "skills": []},
         model_config=None,
-        auto_memory_recall=None,
-        shared_memory=None,
-        is_default=False,
+        sub_agents=None,
+        memory_config={"auto_recall": True, "shared": True, "top_k": 5},
+        guardrails={"max_tool_calls": 10, "timeout_seconds": 120},
+        is_enabled=True,
         created_at=_NOW,
         updated_at=_NOW,
     )
+    # remove old fields that no longer exist
+    kwargs.pop("system_prompt", None)
     defaults.update(kwargs)
     return AgentResponse(**defaults)
 
@@ -128,7 +132,7 @@ async def test_create_agent_returns_201(client_a, mock_svc):
 
     response = await client_a.post(
         "/api/v1/agents",
-        json={"name": "Test Agent", "system_prompt": "You are helpful.", "tools": ["save_memory"]},
+        json={"name": "Test Agent", "prompts": {"behavior": "You are helpful."}},
     )
 
     assert response.status_code == 201
@@ -204,18 +208,17 @@ async def test_list_calls_service_with_requesting_user_id(client_a, mock_svc, us
 
 
 async def test_update_agent_returns_updated_data(client_a, mock_svc):
-    updated = _agent_resp(_AGENT_A_ID, _USER_A_ID, name="Updated Name", system_prompt="New prompt.")
+    updated = _agent_resp(_AGENT_A_ID, _USER_A_ID, name="Updated Name")
     mock_svc.update.return_value = updated
 
     response = await client_a.put(
         f"/api/v1/agents/{_AGENT_A_ID}",
-        json={"name": "Updated Name", "system_prompt": "New prompt."},
+        json={"name": "Updated Name"},
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["name"] == "Updated Name"
-    assert body["system_prompt"] == "New prompt."
     assert body["id"] == str(_AGENT_A_ID)
 
 

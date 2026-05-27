@@ -134,6 +134,7 @@ class TraceCollector:
         self.message_id: str = ""
         self.input_message: str = ""
         self._start_time: float = time.monotonic()
+        self._has_tool_spans: bool = False
 
         # Eagerly create the LangFuse trace (so child spans can attach to it)
         self._trace = None
@@ -148,6 +149,9 @@ class TraceCollector:
                         "agent_id": agent_id,
                         "agent_name": agent_name,
                     },
+                    tags=[
+                        f"agent:{agent_name}" if agent_name else f"agent:{agent_id[:8]}",
+                    ],
                 )
             except Exception:
                 logger.debug("Failed to create LangFuse trace.", exc_info=True)
@@ -179,6 +183,7 @@ class TraceCollector:
     def add_tool_span(self, **kwargs) -> None:
         if self._trace is None:
             return
+        self._has_tool_spans = True
         span = ToolSpan(**kwargs)
         try:
             self._trace.span(
@@ -227,8 +232,18 @@ class TraceCollector:
         if self._trace is None:
             return
         try:
+            # Build final tags
+            tags = [f"agent:{self.agent_name}" if self.agent_name else f"agent:{self.agent_id[:8]}"]
+            if error:
+                tags.append("error")
+            if self._has_tool_spans:
+                tags.append("tool_use")
+            if self.total_latency_ms > 10000:
+                tags.append("slow")
+
             self._trace.update(
                 output=output,
+                tags=tags,
                 metadata={
                     "agent_id": self.agent_id,
                     "agent_name": self.agent_name,

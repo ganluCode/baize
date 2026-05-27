@@ -31,41 +31,30 @@ class TestCreateLangfuseHandlerDisabled:
 
 
 class TestCreateLangfuseHandlerEnabled:
-    """When LangFuse is configured, the factory must return a CallbackHandler."""
+    """When LangFuse is configured, create_langfuse_handler returns None (compatibility stub)."""
 
-    def test_returns_callback_handler_instance(self):
-        from langfuse.langchain import CallbackHandler
-
+    def test_returns_none_regardless_of_credentials(self):
+        """create_langfuse_handler is a compatibility stub — always returns None."""
         settings = _Settings(public_key="pk-test", secret_key="sk-test")
-        with patch("langfuse.Langfuse"):
-            result = create_langfuse_handler(settings)
+        result = create_langfuse_handler(settings)
+        assert result is None
 
-        assert result is not None
-        assert isinstance(result, CallbackHandler)
-
-    def test_langfuse_initialized_with_settings_credentials(self):
+    def test_returns_none_with_valid_keys(self):
         settings = _Settings(
             public_key="pk-abc",
             secret_key="sk-xyz",
             host="http://custom:3000",
         )
-        with patch("langfuse.Langfuse") as mock_lf:
-            create_langfuse_handler(settings)
+        result = create_langfuse_handler(settings)
+        assert result is None
 
-        mock_lf.assert_called_once_with(
-            public_key="pk-abc",
-            secret_key="sk-xyz",
-            host="http://custom:3000",
-        )
-
-    def test_each_call_returns_new_instance(self):
-        """Each request gets its own handler to avoid trace mixing."""
+    def test_each_call_returns_none(self):
+        """The stub consistently returns None for every call."""
         settings = _Settings(public_key="pk-test", secret_key="sk-test")
-        with patch("langfuse.Langfuse"):
-            h1 = create_langfuse_handler(settings)
-            h2 = create_langfuse_handler(settings)
-
-        assert h1 is not h2
+        h1 = create_langfuse_handler(settings)
+        h2 = create_langfuse_handler(settings)
+        assert h1 is None
+        assert h2 is None
 
     def test_returns_none_on_unexpected_exception(self):
         """Import or init errors should not propagate — tracing is optional."""

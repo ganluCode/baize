@@ -344,6 +344,7 @@ class AgentService:
         user_id: uuid.UUID,
         message: str,
         user: UserModel,
+        thinking: bool | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Execute a single chat turn and stream events to the caller.
 
@@ -426,7 +427,7 @@ class AgentService:
             return
 
         # 6. Node: ReAct execution (streams ChatEvents, reports LLM/tool spans)
-        react_node = ReactNode(llm=llm, agent_config=agent_config)
+        react_node = ReactNode(llm=llm, agent_config=agent_config, thinking=thinking)
         try:
             async for chat_event in react_node.stream(ctx):
                 yield chat_event

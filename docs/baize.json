@@ -1420,9 +1420,9 @@
         "tags": [
           "sessions"
         ],
-        "summary": "Archive Session",
-        "description": "Archive a session owned by the authenticated user.\n\nReturns:\n    SessionResponse with updated status.\n\nRaises:\n    HTTPException: 401 if not authenticated, 403 if not owner, 422 if invalid status.",
-        "operationId": "archive_session_api_v1_sessions__session_id__patch",
+        "summary": "Update Session",
+        "description": "Update a session (title and/or status).\n\nReturns:\n    SessionResponse with updated fields.\n\nRaises:\n    HTTPException: 401 if not authenticated, 403 if not owner.",
+        "operationId": "update_session_api_v1_sessions__session_id__patch",
         "parameters": [
           {
             "name": "session_id",
@@ -1574,7 +1574,7 @@
           "sessions"
         ],
         "summary": "List Messages",
-        "description": "Return paginated messages for a session owned by the authenticated user.\n\nMessages are ordered by created_at ascending.\n\nReturns:\n    MessageListResponse with items and total count.\n\nRaises:\n    HTTPException: 401 if not authenticated, 404 if session not found, 403 if not owner.",
+        "description": "Return paginated messages for a session owned by the authenticated user.\n\nSupports two pagination modes:\n- **before**: Cursor-based — return ``limit`` messages older than this message ID.\n  Used for \"load earlier\" when scrolling up in chat UI.\n- **offset**: Traditional offset pagination.\n\nMessages are always returned in chronological order (oldest first).\n\nReturns:\n    MessageListResponse with items and total count.\n\nRaises:\n    HTTPException: 401 if not authenticated, 404 if session not found, 403 if not owner.",
         "operationId": "list_messages_api_v1_sessions__session_id__messages_get",
         "parameters": [
           {
@@ -1593,7 +1593,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "default": 50,
+              "default": 20,
               "title": "Limit"
             }
           },
@@ -1605,6 +1605,23 @@
               "type": "integer",
               "default": 0,
               "title": "Offset"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
             }
           },
           {
@@ -2331,7 +2348,7 @@
           "openai-compat"
         ],
         "summary": "Create Conversation",
-        "description": "Create a new conversation (maps to a Baize session).\n\nThe conversation is created without an agent binding \u2014 the first\n``POST /v1/responses`` call with this conversation will bind it.",
+        "description": "Create a new conversation (maps to a Baize session).\n\nThe conversation is created without an agent binding — the first\n``POST /v1/responses`` call with this conversation will bind it.",
         "operationId": "create_conversation_v1_conversations_post",
         "parameters": [
           {
@@ -2685,7 +2702,7 @@
         },
         "type": "object",
         "title": "AgentPrompts",
-        "description": "\u5206\u5c42 prompt \u914d\u7f6e\u3002\u6240\u6709\u5c42\u90fd\u53ef\u9009\uff0c\u6309\u5b58\u5728\u7684\u5c42\u4f9d\u6b21\u7ec4\u88c5\u3002"
+        "description": "分层 prompt 配置。所有层都可选，按存在的层依次组装。"
       },
       "AgentResponse": {
         "properties": {
@@ -3022,6 +3039,7 @@
             "title": "Session Id"
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "model",
@@ -3151,7 +3169,7 @@
         "properties": {},
         "type": "object",
         "title": "ConversationCreateRequest",
-        "description": "Empty body \u2014 just creates a new conversation."
+        "description": "Empty body — just creates a new conversation."
       },
       "ConversationObject": {
         "properties": {
@@ -3347,7 +3365,7 @@
         },
         "type": "object",
         "title": "GuardrailsConfig",
-        "description": "\u6267\u884c\u62a4\u680f\u914d\u7f6e\u3002"
+        "description": "执行护栏配置。"
       },
       "HTTPValidationError": {
         "properties": {
@@ -3401,7 +3419,7 @@
         },
         "type": "object",
         "title": "MemoryConfig",
-        "description": "\u8bb0\u5fc6\u7b56\u7565\u914d\u7f6e\u3002"
+        "description": "记忆策略配置。"
       },
       "MessageListResponse": {
         "properties": {
@@ -3502,6 +3520,18 @@
         ],
         "title": "OpenAIMessage"
       },
+      "ReasoningConfig": {
+        "properties": {
+          "effort": {
+            "type": "string",
+            "title": "Effort",
+            "default": "medium"
+          }
+        },
+        "type": "object",
+        "title": "ReasoningConfig",
+        "description": "Reasoning/thinking configuration."
+      },
       "ResetKeyResponse": {
         "properties": {
           "api_key": {
@@ -3514,7 +3544,7 @@
           "api_key"
         ],
         "title": "ResetKeyResponse",
-        "description": "Response for API key reset \u2014 contains new plaintext key."
+        "description": "Response for API key reset — contains new plaintext key."
       },
       "ResourceMetadata": {
         "properties": {
@@ -3552,6 +3582,13 @@
               {
                 "items": {
                   "$ref": "#/components/schemas/OpenAIMessage"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
                 },
                 "type": "array"
               }
@@ -3623,6 +3660,16 @@
             ],
             "title": "Max Output Tokens"
           },
+          "reasoning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReasoningConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -3635,6 +3682,7 @@
             "title": "Agent Id"
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "model",
@@ -3742,24 +3790,44 @@
         "type": "string",
         "enum": [
           "active",
-          "archived"
+          "archived",
+          "deleted"
         ],
         "title": "SessionStatus"
       },
       "SessionUpdate": {
         "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "status": {
-            "type": "string",
-            "const": "archived",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "archived"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Status"
           }
         },
         "type": "object",
-        "required": [
-          "status"
-        ],
         "title": "SessionUpdate",
-        "description": "Request body for updating a session \u2014 only archiving is supported."
+        "description": "Request body for updating a session (title and/or status)."
       },
       "TaskCreate": {
         "properties": {
@@ -4165,7 +4233,7 @@
         },
         "type": "object",
         "title": "ToolsConfig",
-        "description": "\u5de5\u5177\u914d\u7f6e\u7ed3\u6784\u3002"
+        "description": "工具配置结构。"
       },
       "UserCreateRequest": {
         "properties": {
@@ -4294,7 +4362,7 @@
           "api_key"
         ],
         "title": "UserCreateResponse",
-        "description": "Response for user creation \u2014 includes one-time plaintext api_key."
+        "description": "Response for user creation — includes one-time plaintext api_key."
       },
       "UserListResponse": {
         "properties": {
@@ -4388,7 +4456,7 @@
           "updated_at"
         ],
         "title": "UserResponse",
-        "description": "Public user representation \u2014 excludes password and api_key_hash."
+        "description": "Public user representation — excludes password and api_key_hash."
       },
       "UserUpdateRequest": {
         "properties": {

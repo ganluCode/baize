@@ -25,6 +25,7 @@ class PersistNode(BaseNode):
 
     async def _execute(self, ctx: NodeContext) -> NodeResult:
         response = ctx.results.get("response", "")
+        thinking = ctx.results.get("thinking")
 
         user_msg = await self._session_svc.save_message(
             session_id=self._session_id,
@@ -37,6 +38,7 @@ class PersistNode(BaseNode):
             user_id=self._user_id,
             role=MessageRole.assistant,
             content=response,
+            thinking=thinking,
         )
 
         ctx.results["message_id"] = str(user_msg.id)

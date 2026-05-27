@@ -36,6 +36,68 @@ from baize.user.models import UserModel
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_text_from_content(content) -> str:
+    """Extract plain text from various content formats.
+
+    Handles:
+    - str: "hello" → "hello"
+    - list of content blocks: [{"type": "input_text", "text": "hello"}] → "hello"
+    - list of content blocks: [{"type": "text", "text": "hello"}] → "hello"
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(block.get("text", ""))
+            elif hasattr(block, "text"):
+                parts.append(block.text)
+        return "".join(parts)
+    return str(content) if content else ""
+
+
+def _extract_message(input_data) -> str:
+    """Extract the user's message from Responses API input.
+
+    Supports:
+    - str: "hello"
+    - list[{role, content}]: standard messages
+    - list[{type: "message", role, content: [{type: "input_text", text}]}]: OpenAI Responses format
+    """
+    if isinstance(input_data, str):
+        return input_data
+
+    if not isinstance(input_data, list) or not input_data:
+        return ""
+
+    # Collect user messages
+    user_texts = []
+    for item in input_data:
+        if isinstance(item, dict):
+            role = item.get("role", "")
+            content = item.get("content", "")
+        elif hasattr(item, "role"):
+            role = item.role
+            content = item.content if hasattr(item, "content") else ""
+        else:
+            continue
+
+        if role == "user":
+            user_texts.append(_extract_text_from_content(content))
+
+    if user_texts:
+        return user_texts[-1]
+
+    # Fallback: take last item's content
+    last = input_data[-1]
+    content = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
+    return _extract_text_from_content(content)
+
+
 router = APIRouter(tags=["openai-compat"])
 
 
@@ -58,6 +120,8 @@ async def create_response(
     Supports both streaming and non-streaming modes.
     """
     uid = current_user.id
+    logger.info("Responses API request: model=%s, input_type=%s, conversation=%s, stream=%s",
+                body.model, type(body.input).__name__, body.conversation, body.stream)
 
     # 1. Resolve agent
     agent = await resolve_agent_by_model(body.model, uid, db)
@@ -74,22 +138,21 @@ async def create_response(
         session_id = session.id
 
     # 3. Extract current message from input
-    if isinstance(body.input, str):
-        message = body.input
-    elif isinstance(body.input, list) and body.input:
-        # Take the last user message
-        user_msgs = [m for m in body.input if m.role == "user"]
-        message = user_msgs[-1].content if user_msgs else body.input[-1].content
-    else:
+    message = _extract_message(body.input)
+    if not message:
         raise HTTPException(status_code=400, detail="input cannot be empty")
 
-    # 4. Call AgentService.chat()
+    # 4. Resolve thinking toggle (binary on/off)
+    thinking = body.resolve_thinking()
+
+    # 5. Call AgentService.chat()
     chat_iter = agent_svc.chat(
         agent_id=agent.id,
         session_id=session_id,
         user_id=uid,
         message=message,
         user=current_user,
+        thinking=thinking,
     )
 
     if body.stream:
@@ -131,6 +194,14 @@ async def _responses_sse_stream(
                     "event": "response.output_text.delta",
                     "data": json.dumps({
                         "type": "response.output_text.delta",
+                        "delta": event.payload.get("content", ""),
+                    }, ensure_ascii=False),
+                }
+            elif event.type == "thinking":
+                yield {
+                    "event": "response.thinking.delta",
+                    "data": json.dumps({
+                        "type": "response.thinking.delta",
                         "delta": event.payload.get("content", ""),
                     }, ensure_ascii=False),
                 }

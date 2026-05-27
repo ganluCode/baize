@@ -74,6 +74,7 @@ async def chat_completions(
         user_id=uid,
         message=current_message,
         user=current_user,
+        thinking=body.resolve_thinking(),
     )
 
     if body.stream:
@@ -100,6 +101,20 @@ async def _completions_sse_stream(
                     choices=[
                         ChatCompletionChoice(
                             delta={"content": event.payload.get("content", "")},
+                        )
+                    ],
+                )
+                yield {"data": chunk.model_dump_json()}
+            elif event.type == "thinking":
+                # DeepSeek/火山方舟兼容：用 reasoning_content 字段输出思考内容
+                chunk = ChatCompletionResponse(
+                    id=chat_id,
+                    object="chat.completion.chunk",
+                    created=int(time.time()),
+                    model=model,
+                    choices=[
+                        ChatCompletionChoice(
+                            delta={"reasoning_content": event.payload.get("content", "")},
                         )
                     ],
                 )
@@ -132,10 +147,13 @@ async def _completions_collect(
     """Collect all ChatEvents into a non-streaming Chat Completions response."""
     chat_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     content_parts: list[str] = []
+    thinking_parts: list[str] = []
 
     async for event in chat_iter:
         if event.type == "token":
             content_parts.append(event.payload.get("content", ""))
+        elif event.type == "thinking":
+            thinking_parts.append(event.payload.get("content", ""))
         elif event.type == "error":
             raise HTTPException(
                 status_code=500,
@@ -148,7 +166,11 @@ async def _completions_collect(
         model=model,
         choices=[
             ChatCompletionChoice(
-                message=OpenAIMessage(role="assistant", content="".join(content_parts)),
+                message=OpenAIMessage(
+                    role="assistant",
+                    content="".join(content_parts),
+                    reasoning_content="".join(thinking_parts) or None,
+                ),
                 finish_reason="stop",
             )
         ],

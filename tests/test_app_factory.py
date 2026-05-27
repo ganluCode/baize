@@ -61,10 +61,10 @@ async def test_openapi_contains_required_tags(client: AsyncClient) -> None:
 
 
 async def test_routes_use_api_v1_prefix(client: AsyncClient) -> None:
-    """Verify that module routes are registered under /api/v1."""
+    """Verify that module routes are registered under /api/v1 or /v1 (OpenAI compat)."""
     response = await client.get("/openapi.json")
     paths = set(response.json().get("paths", {}).keys())
     api_paths = {p for p in paths if p != "/health"}
-    assert all(p.startswith("/api/v1") for p in api_paths), (
-        f"Non-/api/v1 paths: {[p for p in api_paths if not p.startswith('/api/v1')]}"
+    assert all(p.startswith("/api/v1") or p.startswith("/v1") for p in api_paths), (
+        f"Unexpected path prefixes: {[p for p in api_paths if not p.startswith('/api/v1') and not p.startswith('/v1')]}"
     )

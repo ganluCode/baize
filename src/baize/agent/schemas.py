@@ -91,7 +91,7 @@ class AgentResponse(BaseModel):
     description: str | None
     agent_type: str
     prompts: AgentPrompts | None
-    llm_config: dict[str, Any] | None = Field(default=None, alias="model_config")
+    llm_config: dict[str, Any] | None = Field(default=None, alias="model_config", validation_alias="model_config_json")
     tools: ToolsConfig | None
     sub_agents: list[str] | None
     memory_config: MemoryConfig | None

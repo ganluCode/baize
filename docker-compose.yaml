@@ -7,7 +7,6 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: baize-postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: baize
       POSTGRES_PASSWORD: baize123
@@ -25,7 +24,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: baize-redis
-    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -42,7 +40,6 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: baize-webui
-    restart: unless-stopped
     ports:
       - "3000:8080"
     environment:
@@ -57,8 +54,10 @@ services:
       ENABLE_FORWARD_USER_INFO_HEADERS: "true"
       # 启用 Responses API 有状态模式（服务端管会话历史）
       ENABLE_RESPONSES_API_STATEFUL: "true"
-      # 关闭注册（单用户使用）
-      ENABLE_SIGNUP: "false"
+      # 注册控制
+      ENABLE_SIGNUP: "true"
+      ENABLE_LOGIN_FORM: "true"
+      WEBUI_AUTH: "true"
     volumes:
       - webui_data:/app/backend/data
     depends_on:

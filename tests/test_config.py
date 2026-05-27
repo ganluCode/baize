@@ -81,14 +81,16 @@ class TestSettings:
         assert settings.admin_api_key == "test-key"
         assert settings.secret_key == "test-secret"
 
-    def test_debug_defaults_to_false(self, monkeypatch):
+    def test_debug_defaults_to_false(self, monkeypatch, tmp_path):
         monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@h:5432/db")
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("ADMIN_API_KEY", "key")
         monkeypatch.setenv("SECRET_KEY", "secret")
         monkeypatch.delenv("DEBUG", raising=False)
+        # Prevent Settings from loading DEBUG=True from .env.local by pointing to empty files
+        monkeypatch.setenv("CONFIG_YAML_PATH", str(tmp_path / "nonexistent.yaml"))
 
-        settings = Settings()
+        settings = Settings(_env_file=str(tmp_path / "empty.env"))
 
         assert settings.debug is False
 

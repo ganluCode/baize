@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     # --- memory config (populated from yaml in model_post_init) ---
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {"env_file": (".env", ".env.local"), "env_file_encoding": "utf-8", "extra": "ignore"}
 
     def model_post_init(self, __context: Any) -> None:
         """Load and attach the YAML config after field validation."""

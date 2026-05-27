@@ -31,6 +31,7 @@ class SessionService:
         user_id: uuid.UUID,
         role: MessageRole,
         content: str,
+        thinking: str | None = None,
         tool_calls: dict | None = None,
         tool_name: str | None = None,
         token_usage: dict | None = None,
@@ -42,6 +43,7 @@ class SessionService:
             user_id: The user who owns this message.
             role: Message role (user / assistant / system / tool).
             content: Message text.
+            thinking: Optional reasoning/thinking content (for assistant messages).
             tool_calls: Optional tool-call payload.
             tool_name: Optional tool name for tool-role messages.
             token_usage: Optional token usage metadata.
@@ -54,6 +56,7 @@ class SessionService:
             user_id=user_id,
             role=role,
             content=content,
+            thinking=thinking,
             tool_calls=tool_calls,
             tool_name=tool_name,
             token_usage=token_usage,
@@ -151,21 +154,28 @@ class SessionService:
             raise HTTPException(status_code=404, detail="Session not found.")
         if session.user_id != user_id:
             raise HTTPException(status_code=403, detail="Forbidden.")
+        from baize.session.models import SessionStatus
+        if session.status == SessionStatus.deleted:
+            raise HTTPException(status_code=404, detail="Session not found.")
         return session
 
-    async def archive_session(
+    async def update_session(
         self,
         session_id: uuid.UUID,
         user_id: uuid.UUID,
+        title: str | None = None,
+        status: str | None = None,
     ) -> SessionModel:
-        """Archive a session, enforcing ownership.
+        """Update session title and/or status, enforcing ownership.
 
         Args:
-            session_id: The session to archive.
+            session_id: The session to update.
             user_id: The requesting user's id.
+            title: New title (None = no change).
+            status: New status (None = no change).
 
         Returns:
-            The updated SessionModel with status=archived.
+            The updated SessionModel.
 
         Raises:
             HTTPException: 404 if not found, 403 if not owned by the user.
@@ -173,10 +183,25 @@ class SessionService:
         from baize.session.models import SessionStatus
 
         await self.get_session(session_id, user_id)
-        updated = await self._session_repo.update(session_id, status=SessionStatus.archived)
-        assert updated is not None
-        logger.debug("Archived session %s.", session_id)
-        return updated
+        kwargs = {}
+        if title is not None:
+            kwargs["title"] = title
+        if status is not None:
+            kwargs["status"] = SessionStatus(status)
+        if kwargs:
+            updated = await self._session_repo.update(session_id, **kwargs)
+            assert updated is not None
+            return updated
+        # Nothing to update — return as-is
+        return await self.get_session(session_id, user_id)
+
+    async def archive_session(
+        self,
+        session_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> SessionModel:
+        """Archive a session (convenience wrapper)."""
+        return await self.update_session(session_id, user_id, status="archived")
 
     async def delete_sessions_by_agent(self, agent_id: uuid.UUID) -> None:
         """Delete all sessions (and their messages) for a given agent.
@@ -194,18 +219,17 @@ class SessionService:
         session_id: uuid.UUID,
         user_id: uuid.UUID,
     ) -> None:
-        """Delete a session, enforcing ownership.
+        """Soft-delete a session (set status=deleted), enforcing ownership.
 
         Args:
-            session_id: The session to delete.
+            session_id: The session to soft-delete.
             user_id: The requesting user's id.
 
         Raises:
             HTTPException: 404 if not found, 403 if not owned by the user.
         """
-        await self.get_session(session_id, user_id)
-        await self._session_repo.delete(session_id)
-        logger.debug("Deleted session %s.", session_id)
+        await self.update_session(session_id, user_id, status="deleted")
+        logger.debug("Soft-deleted session %s.", session_id)
 
     async def list_messages(
         self,
@@ -213,6 +237,7 @@ class SessionService:
         user_id: uuid.UUID,
         limit: int = 50,
         offset: int = 0,
+        before: uuid.UUID | None = None,
     ) -> tuple[list[ChatMessageModel], int]:
         """Return paginated messages for a session, enforcing ownership.
 
@@ -220,7 +245,8 @@ class SessionService:
             session_id: The session whose messages to retrieve.
             user_id: The requesting user's id.
             limit: Maximum number of messages to return.
-            offset: Number of messages to skip.
+            offset: Number of messages to skip (ignored when before is set).
+            before: Cursor — return messages before this message ID.
 
         Returns:
             A tuple of (items, total_count) ordered by created_at ascending.
@@ -229,7 +255,7 @@ class SessionService:
             HTTPException: 404 if session not found, 403 if not owned by the user.
         """
         await self.get_session(session_id, user_id)
-        return await self._message_repo.list_by_session(session_id, limit=limit, offset=offset)
+        return await self._message_repo.list_by_session(session_id, limit=limit, offset=offset, before=before)
 
     async def get_or_create_session(
         self,

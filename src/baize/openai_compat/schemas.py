@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------------------------------------------------------------------------
@@ -12,8 +12,12 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 class OpenAIMessage(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     role: str
     content: str
+    # 推理内容（DeepSeek/火山方舟等 OpenAI 兼容协议的扩展字段）
+    reasoning_content: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -37,15 +41,28 @@ class ModelListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     model: str
     messages: list[OpenAIMessage]
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
     user: str | None = None
+    # 标准 OpenAI 字段：reasoning_effort（"none" = 关闭思考，其他值 = 开启）
+    reasoning_effort: str | None = None
     # Baize 扩展字段（可选，高级客户端可用）
+    thinking: bool | None = None
     agent_id: str | None = None
     session_id: str | None = None
+
+    def resolve_thinking(self) -> bool | None:
+        """统一为二元思考开关：thinking 字段优先，否则看 reasoning_effort。"""
+        if self.thinking is not None:
+            return self.thinking
+        if self.reasoning_effort is None:
+            return None
+        return self.reasoning_effort != "none"
 
 
 class ChatCompletionChoice(BaseModel):
@@ -74,9 +91,17 @@ class ChatCompletionResponse(BaseModel):
 # POST /v1/responses
 # ---------------------------------------------------------------------------
 
+class ReasoningConfig(BaseModel):
+    """Reasoning/thinking configuration."""
+
+    effort: str = "medium"  # none | minimal | low | medium | high
+
+
 class ResponsesRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     model: str
-    input: str | list[OpenAIMessage]
+    input: str | list[OpenAIMessage] | list[dict]
     instructions: str | None = None
     conversation: str | None = None
     previous_response_id: str | None = None
@@ -84,8 +109,18 @@ class ResponsesRequest(BaseModel):
     store: bool = True
     temperature: float | None = None
     max_output_tokens: int | None = None
+    reasoning: ReasoningConfig | None = None
     # Baize 扩展
+    thinking: bool | None = None
     agent_id: str | None = None
+
+    def resolve_thinking(self) -> bool | None:
+        """统一为二元思考开关：thinking 字段优先，否则看 reasoning.effort。"""
+        if self.thinking is not None:
+            return self.thinking
+        if self.reasoning is None:
+            return None
+        return self.reasoning.effort != "none"
 
 
 class ResponseOutputText(BaseModel):

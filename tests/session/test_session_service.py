@@ -95,6 +95,7 @@ async def test_save_message_creates_message_and_updates_session(
         user_id=user_id,
         role=MessageRole.user,
         content="hello",
+        thinking=None,
         tool_calls=None,
         tool_name=None,
         token_usage=None,

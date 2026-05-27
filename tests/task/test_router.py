@@ -44,49 +44,49 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATAB
 # ---------------------------------------------------------------------------
 
 
-async def _create_schema() -> None:
+async def _ensure_schema() -> None:
+    """Ensure tables exist (create_all is idempotent, never drops)."""
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await engine.dispose()
 
 
-async def _drop_schema() -> None:
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# Module-scoped sync fixture: schema lifecycle
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(scope="module", autouse=True)
 def module_schema():
-    """Create the test schema before this module; drop it after."""
-    asyncio.run(_create_schema())
+    """Ensure schema exists before this module (no teardown, no drop)."""
+    asyncio.run(_ensure_schema())
     yield
-    asyncio.run(_drop_schema())
 
 
 # ---------------------------------------------------------------------------
 # Function-scoped fixtures
 # ---------------------------------------------------------------------------
 
+_test_created_ids: dict[str, list[str]] = {"tasks": [], "system_users": []}
+
+
+def _track_id(table: str, row_id) -> None:
+    _test_created_ids[table].append(str(row_id))
+
 
 @pytest_asyncio.fixture
 async def db():
-    """Yield a clean DB session; truncate task and user tables before each test."""
+    """Yield a DB session; clean up only test-created rows after each test."""
+    for key in _test_created_ids:
+        _test_created_ids[key].clear()
+
     engine = create_async_engine(TEST_DATABASE_URL)
     session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
     async with session_factory() as session:
-        await session.execute(
-            text("TRUNCATE tasks, system_users RESTART IDENTITY CASCADE")
-        )
-        await session.commit()
         yield session
+
+        for table in ["tasks", "system_users"]:
+            ids = _test_created_ids[table]
+            if ids:
+                placeholders = ", ".join(f"'{i}'" for i in ids)
+                await session.execute(text(f"DELETE FROM {table} WHERE id IN ({placeholders})"))
+        await session.commit()
     await engine.dispose()
 
 
@@ -108,6 +108,7 @@ async def _create_user(db: AsyncSession, api_key: str, name: str = "testuser") -
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    _track_id("system_users", user.id)
     return user
 
 

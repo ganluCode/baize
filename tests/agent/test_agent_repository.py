@@ -20,12 +20,14 @@ def _make_agent(
     a.user_id = user_id or uuid.uuid4()
     a.name = "Test Agent"
     a.description = None
-    a.system_prompt = "You are a helpful assistant."
-    a.tools = ["save_memory"]
-    a.model_config = None
-    a.auto_memory_recall = None
-    a.shared_memory = None
-    a.is_default = is_default
+    a.agent_type = "chat"
+    a.is_enabled = True
+    a.prompts = {"behavior": "You are a helpful assistant."}
+    a.tools = {"builtin": ["save_memory"], "mcp_servers": [], "skills": []}
+    a.model_config_json = None
+    a.sub_agents = None
+    a.memory_config = {"auto_recall": True, "shared": True, "top_k": 5}
+    a.guardrails = {"max_tool_calls": 10, "timeout_seconds": 120}
     a.created_at = datetime.now(UTC)
     a.updated_at = datetime.now(UTC)
     return a
@@ -90,18 +92,24 @@ async def test_list_by_user_returns_empty_list(
 async def test_get_default_by_user_returns_default_agent(
     repo: AgentConfigRepository, db_session: AsyncMock
 ) -> None:
-    """get_default_by_user returns the agent where is_default=True."""
+    """get_default_by_user returns the agent pointed to by default_agent_id."""
     user_id = uuid.uuid4()
-    default_agent = _make_agent(user_id=user_id, is_default=True)
+    default_agent = _make_agent(user_id=user_id)
+    default_agent_id = default_agent.id
 
-    result_mock = MagicMock()
-    result_mock.scalar_one_or_none.return_value = default_agent
-    db_session.execute.return_value = result_mock
+    # First execute: get default_agent_id from system_users
+    user_result_mock = MagicMock()
+    user_result_mock.scalar_one_or_none.return_value = default_agent_id
+
+    # Second execute: get_by_id for the agent
+    agent_result_mock = MagicMock()
+    agent_result_mock.scalar_one_or_none.return_value = default_agent
+
+    db_session.execute.side_effect = [user_result_mock, agent_result_mock]
 
     result = await repo.get_default_by_user(user_id)
 
     assert result is default_agent
-    assert result.is_default is True
 
 
 @pytest.mark.asyncio
@@ -125,45 +133,44 @@ async def test_get_default_by_user_returns_none_when_no_default(
 async def test_set_default_clears_all_then_sets_target(
     repo: AgentConfigRepository, db_session: AsyncMock
 ) -> None:
-    """set_default must clear all user's defaults then mark the target agent."""
+    """set_default verifies ownership then updates system_users.default_agent_id."""
     user_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
-    target_agent = _make_agent(user_id=user_id, is_default=False)
-    target_agent.id = agent_id
+    # First execute: verify agent belongs to user (SELECT AgentConfig.id)
+    check_result = MagicMock()
+    check_result.scalar_one_or_none.return_value = agent_id
 
-    # First execute: clear all defaults (UPDATE)
-    # Second execute: get the target agent
-    get_result = MagicMock()
-    get_result.scalar_one_or_none.return_value = target_agent
-    db_session.execute.side_effect = [AsyncMock(), get_result]
+    # Second execute: UPDATE system_users
+    update_result = MagicMock()
+    db_session.execute.side_effect = [check_result, update_result]
 
     await repo.set_default(user_id, agent_id)
 
-    # Two executes: bulk update + select target
+    # Two executes: select to check ownership + update system_users
     assert db_session.execute.call_count == 2
     # commit called
     db_session.commit.assert_called()
-    # target agent's is_default should be True
-    assert target_agent.is_default is True
 
 
 @pytest.mark.asyncio
 async def test_set_default_does_nothing_when_agent_not_found(
     repo: AgentConfigRepository, db_session: AsyncMock
 ) -> None:
-    """set_default does not set is_default when agent_id is not found for user."""
+    """set_default does not update when agent_id is not found for user."""
     user_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
-    get_result = MagicMock()
-    get_result.scalar_one_or_none.return_value = None
-    db_session.execute.side_effect = [AsyncMock(), get_result]
+    # First (and only) execute: SELECT to verify ownership returns None
+    check_result = MagicMock()
+    check_result.scalar_one_or_none.return_value = None
+    db_session.execute.return_value = check_result
 
     await repo.set_default(user_id, agent_id)
 
-    # commit is still called after the bulk update
-    db_session.commit.assert_called()
+    # Only one execute: ownership check; no UPDATE executed, no commit
+    assert db_session.execute.call_count == 1
+    db_session.commit.assert_not_called()
 
 
 # --- update ---
