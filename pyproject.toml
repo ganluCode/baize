@@ -27,6 +27,8 @@ dependencies = [
     "structlog>=24.0.0",
     "qdrant-client>=1.9",
     "langchain-text-splitters>=0.3.0",
+    "mammoth>=1.7",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]
