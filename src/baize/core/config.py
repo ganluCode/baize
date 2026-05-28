@@ -98,6 +98,16 @@ class Settings(BaseSettings):
     openmemory_base_url: str | None = None
     openmemory_api_key: str | None = None
 
+    # Qdrant
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str | None = None
+    qdrant_grpc_port: int | None = None
+
+    # Knowledge defaults
+    knowledge_default_top_k: int = 8
+    knowledge_default_chunk_size: int = 800
+    knowledge_default_chunk_overlap: int = 80
+
     # Observability
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
@@ -125,3 +135,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return the singleton :class:`Settings` instance (cached after first call)."""
     return Settings()
+
+
+settings: Settings = get_settings()
