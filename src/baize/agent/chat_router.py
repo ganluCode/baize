@@ -108,6 +108,7 @@ class ChatSyncResponse(BaseModel):
     session_id: str
     message_id: str
     content: str
+    thinking: str | None = None
     tool_calls: list[dict[str, Any]]
 
 
@@ -157,6 +158,7 @@ async def chat_sync(
 
     # 5. Collect all chat events
     content_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     pending_tool_calls: list[dict[str, Any]] = []
     session_id_result: str = str(effective_session_id)
@@ -174,6 +176,8 @@ async def chat_sync(
     async for event in chat_iter:
         if event.type == "token":
             content_parts.append(event.payload.get("content", ""))
+        elif event.type == "thinking":
+            thinking_parts.append(event.payload.get("content", ""))
         elif event.type == "tool_call":
             pending_tool_calls.append({
                 "tool": event.payload.get("tool", ""),
@@ -203,6 +207,7 @@ async def chat_sync(
             session_id=session_id_result,
             message_id=message_id_result,
             content="".join(content_parts),
+            thinking="".join(thinking_parts) or None,
             tool_calls=tool_calls,
         )
     )

@@ -60,22 +60,10 @@ def _extract_text_from_content(content) -> str:
     return str(content) if content else ""
 
 
-def _extract_message(input_data) -> str:
-    """Extract the user's message from Responses API input.
-
-    Supports:
-    - str: "hello"
-    - list[{role, content}]: standard messages
-    - list[{type: "message", role, content: [{type: "input_text", text}]}]: OpenAI Responses format
-    """
-    if isinstance(input_data, str):
-        return input_data
-
-    if not isinstance(input_data, list) or not input_data:
-        return ""
-
-    # Collect user messages
-    user_texts = []
+def _iter_input_items(input_data):
+    """Yield (role, content_text) pairs from Responses API input."""
+    if not isinstance(input_data, list):
+        return
     for item in input_data:
         if isinstance(item, dict):
             role = item.get("role", "")
@@ -85,17 +73,54 @@ def _extract_message(input_data) -> str:
             content = item.content if hasattr(item, "content") else ""
         else:
             continue
+        yield role, _extract_text_from_content(content)
 
-        if role == "user":
-            user_texts.append(_extract_text_from_content(content))
 
+def _extract_message(input_data) -> str:
+    """Extract the latest user message from Responses API input."""
+    if isinstance(input_data, str):
+        return input_data
+    if not isinstance(input_data, list) or not input_data:
+        return ""
+
+    user_texts = [text for role, text in _iter_input_items(input_data) if role == "user"]
     if user_texts:
         return user_texts[-1]
 
-    # Fallback: take last item's content
+    # Fallback: take last item's content regardless of role
     last = input_data[-1]
     content = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
     return _extract_text_from_content(content)
+
+
+def _extract_history(input_data):
+    """Extract all messages BEFORE the last user message as LangChain history.
+
+    Returns None when input is a string (single message) or empty list.
+    System messages are skipped (Baize injects its own).
+    """
+    if not isinstance(input_data, list) or len(input_data) <= 1:
+        return None
+
+    from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+
+    items = list(_iter_input_items(input_data))
+    # Find index of the last user message — everything before it is history
+    last_user_idx = next(
+        (i for i in range(len(items) - 1, -1, -1) if items[i][0] == "user"),
+        None,
+    )
+    if last_user_idx is None or last_user_idx == 0:
+        return None
+
+    history: list[BaseMessage] = []
+    for role, text in items[:last_user_idx]:
+        if role == "user":
+            history.append(HumanMessage(content=text))
+        elif role == "assistant":
+            history.append(AIMessage(content=text))
+        # system / tool / others — skipped
+    return history or None
 
 
 router = APIRouter(tags=["openai-compat"])
@@ -137,10 +162,12 @@ async def create_response(
         session = await session_svc.create_session(uid, agent.id)
         session_id = session.id
 
-    # 3. Extract current message from input
+    # 3. Extract current message + prior history from input
     message = _extract_message(body.input)
     if not message:
         raise HTTPException(status_code=400, detail="input cannot be empty")
+    # If input is a list with prior messages, use them as history (overrides DB lookup)
+    external_history = _extract_history(body.input)
 
     # 4. Resolve thinking toggle (binary on/off)
     thinking = body.resolve_thinking()
@@ -153,6 +180,7 @@ async def create_response(
         message=message,
         user=current_user,
         thinking=thinking,
+        external_history=external_history,
     )
 
     if body.stream:
@@ -268,11 +296,14 @@ async def _responses_collect(
     """Collect all ChatEvents into a non-streaming Responses API response."""
     response_id = f"resp-{uuid.uuid4().hex[:24]}"
     content_parts: list[str] = []
+    thinking_parts: list[str] = []
     message_id = ""
 
     async for event in chat_iter:
         if event.type == "token":
             content_parts.append(event.payload.get("content", ""))
+        elif event.type == "thinking":
+            thinking_parts.append(event.payload.get("content", ""))
         elif event.type == "done":
             message_id = event.payload.get("message_id", "")
         elif event.type == "error":
@@ -281,16 +312,27 @@ async def _responses_collect(
                 detail=event.payload.get("message", "Agent error"),
             )
 
+    output: list = []
+    if thinking_parts:
+        from baize.openai_compat.schemas import ResponseOutputReasoning, ResponseReasoningSummary
+        output.append(
+            ResponseOutputReasoning(
+                id=f"rs-{uuid.uuid4().hex[:16]}",
+                summary=[ResponseReasoningSummary(text="".join(thinking_parts))],
+            )
+        )
+    output.append(
+        ResponseOutputMessage(
+            id=message_id or f"msg-{uuid.uuid4().hex[:16]}",
+            content=[ResponseOutputText(text="".join(content_parts))],
+        )
+    )
+
     return ResponseObject(
         id=response_id,
         created_at=int(time.time()),
         model=model,
-        output=[
-            ResponseOutputMessage(
-                id=message_id or f"msg-{uuid.uuid4().hex[:16]}",
-                content=[ResponseOutputText(text="".join(content_parts))],
-            )
-        ],
+        output=output,
         conversation=ConversationRef(id=str(session_id)),
     )
 

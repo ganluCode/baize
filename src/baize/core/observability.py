@@ -60,6 +60,7 @@ class LLMSpan:
     model: str = ""
     input: str = ""
     output: str = ""
+    thinking: str = ""           # 推理内容（推理模型才有，非空时上报到 metadata）
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_ms: int = 0
@@ -168,6 +169,9 @@ class TraceCollector:
         if self._trace is None:
             return
         span = LLMSpan(**kwargs)
+        metadata: dict = {"latency_ms": span.latency_ms}
+        if span.thinking:
+            metadata["thinking"] = span.thinking
         try:
             self._trace.generation(
                 name="llm",
@@ -175,7 +179,7 @@ class TraceCollector:
                 input=span.input,
                 output=span.output,
                 usage={"input": span.prompt_tokens, "output": span.completion_tokens},
-                metadata={"latency_ms": span.latency_ms},
+                metadata=metadata,
             )
         except Exception:
             logger.debug("Failed to report LLM span.", exc_info=True)

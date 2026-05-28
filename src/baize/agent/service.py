@@ -345,6 +345,7 @@ class AgentService:
         message: str,
         user: UserModel,
         thinking: bool | None = None,
+        external_history: list | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Execute a single chat turn and stream events to the caller.
 
@@ -362,10 +363,7 @@ class AgentService:
             :class:`ChatEvent` instances of type "token", "tool_call", "tool_result",
             "done", or "error".
         """
-        from baize.agent.nodes.base import NodeContext
-        from baize.agent.nodes.context_node import ContextNode
-        from baize.agent.nodes.persist_node import PersistNode
-        from baize.agent.nodes.react_node import ReactNode
+        from baize.agent.pipeline import ContextStep, PersistStep, ReactStep, StepContext
         from baize.core.observability import TraceCollector
 
         _slog.info(
@@ -375,7 +373,7 @@ class AgentService:
             agent_id=str(agent_id),
         )
 
-        # 0. Create trace collector (spans reported in real time by each node)
+        # 0. Create trace collector (spans reported in real time by each step)
         collector = TraceCollector(
             user_id=str(user_id),
             session_id=str(session_id),
@@ -402,8 +400,8 @@ class AgentService:
         # 3. Resolve LLM
         llm = self._resolve_llm(agent_config)
 
-        # 4. Build shared node context
-        ctx = NodeContext(
+        # 4. Build shared step context
+        ctx = StepContext(
             collector=collector,
             user_id=str(user_id),
             session_id=str(session.id),
@@ -412,24 +410,25 @@ class AgentService:
         )
         collector.set_input(message)
 
-        # 5. Node: Context preparation (memory + prompt + history)
-        context_node = ContextNode(
+        # 5. Step: Context preparation (memory + prompt + history)
+        context_step = ContextStep(
             context_svc=self._context_svc,
             agent_config=agent_config,
             user=user,
             llm=llm,
+            external_history=external_history,
         )
         try:
-            await context_node.run(ctx)
+            await context_step.run(ctx)
         except Exception as exc:
             collector.finalize(error=str(exc))
             yield ChatEvent(type="error", payload={"message": f"上下文准备失败: {exc}"})
             return
 
-        # 6. Node: ReAct execution (streams ChatEvents, reports LLM/tool spans)
-        react_node = ReactNode(llm=llm, agent_config=agent_config, thinking=thinking)
+        # 6. Step: Graph execution (streams ChatEvents, reports LLM/tool spans)
+        react_step = ReactStep(llm=llm, agent_config=agent_config, thinking=thinking)
         try:
-            async for chat_event in react_node.stream(ctx):
+            async for chat_event in react_step.stream(ctx):
                 yield chat_event
                 if chat_event.type == "error":
                     return
@@ -440,13 +439,13 @@ class AgentService:
                         session_id=str(session_id), agent_id=str(agent_id))
             raise
 
-        # 7. Node: Persist messages
-        persist_node = PersistNode(
+        # 7. Step: Persist messages
+        persist_step = PersistStep(
             session_svc=self._session_svc,
             session_id=session.id,
             user_id=user_id,
         )
-        await persist_node.run(ctx)
+        await persist_step.run(ctx)
 
         yield ChatEvent(
             type="done",

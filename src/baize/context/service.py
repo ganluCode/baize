@@ -75,15 +75,21 @@ class ContextService:
         session_id: uuid.UUID,
         message: str,
         llm: BaseLanguageModel,
+        external_history: list[BaseMessage] | None = None,
     ) -> PreparedContext:
         """Prepare the full context for one chat turn.
 
         Args:
             agent_config: The agent whose prompt/tools/memory settings apply.
             user: The current user (used for preference layer).
-            session_id: Session whose history should be loaded and compressed.
+            session_id: Session whose history should be loaded (ignored if
+                ``external_history`` is provided).
             message: The current user message — used for memory recall query.
             llm: LangChain chat model used by history compression.
+            external_history: When provided, use this list as the conversation
+                history instead of loading from DB. Used by stateless clients
+                (CherryStudio / OpenClaw / Open WebUI) that send the full
+                ``messages`` array on every request.
 
         Returns:
             :class:`PreparedContext` bundling system prompt, compressed history,
@@ -109,8 +115,12 @@ class ContextService:
         system_prompt = assemble_system_prompt(agent_config, user, memories)
 
         # 4. Load and compress conversation history
-        history_models = await self._session_svc.get_history(session_id)
-        lc_history = _history_to_lc_messages(history_models)
+        if external_history is not None:
+            # Stateless mode — use client-provided history, skip DB lookup
+            lc_history = external_history
+        else:
+            history_models = await self._session_svc.get_history(session_id)
+            lc_history = _history_to_lc_messages(history_models)
         compressed_history = await compress_history(lc_history, llm)
 
         return PreparedContext(

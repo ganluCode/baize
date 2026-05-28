@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -34,6 +35,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["openai-compat"])
 
 
+def _to_lc_history(messages: list[OpenAIMessage]) -> list[BaseMessage]:
+    """Convert OpenAI-style messages to LangChain history (skips system messages)."""
+    history: list[BaseMessage] = []
+    for m in messages:
+        if m.role == "user":
+            history.append(HumanMessage(content=m.content))
+        elif m.role == "assistant":
+            history.append(AIMessage(content=m.content))
+        elif m.role == "tool":
+            history.append(ToolMessage(content=m.content, tool_call_id=""))
+        # 'system' is skipped — Baize injects its own from agent_config.prompts
+    return history
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     body: ChatCompletionRequest,
@@ -51,23 +66,22 @@ async def chat_completions(
     # 1. Resolve agent
     agent = await resolve_agent_by_model(body.model, uid, db)
 
-    # 2. Extract current message (last user message)
+    # 2. Extract current message + prior history from client-sent messages array
     if not body.messages:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
 
-    user_msgs = [m for m in body.messages if m.role == "user"]
-    if not user_msgs:
-        raise HTTPException(status_code=400, detail="No user message found")
-    current_message = user_msgs[-1].content
+    if body.messages[-1].role != "user":
+        raise HTTPException(status_code=400, detail="Last message must be from user")
+    current_message = body.messages[-1].content
+
+    # Convert all messages BEFORE the last one into LangChain history.
+    # System messages from the client are skipped — Baize injects its own.
+    external_history = _to_lc_history(body.messages[:-1])
 
     # 3. Create a transient session for tracking (or use provided session_id)
     session_id = uuid.UUID(body.session_id) if body.session_id else uuid.uuid4()
 
-    # 4. Call AgentService.chat()
-    # NOTE: In stateless mode the client already sent full history in messages.
-    # AgentService will load session history from DB (which is empty for transient sessions),
-    # and ContextService will assemble prompt + recall memory normally.
-    # The client-provided history is used by the LLM via the messages array.
+    # 4. Call AgentService.chat() with client-provided history (stateless mode)
     chat_iter = agent_svc.chat(
         agent_id=agent.id,
         session_id=session_id,
@@ -75,6 +89,7 @@ async def chat_completions(
         message=current_message,
         user=current_user,
         thinking=body.resolve_thinking(),
+        external_history=external_history,
     )
 
     if body.stream:
@@ -104,7 +119,7 @@ async def _completions_sse_stream(
                         )
                     ],
                 )
-                yield {"data": chunk.model_dump_json()}
+                yield {"data": chunk.model_dump_json(exclude_none=True)}
             elif event.type == "thinking":
                 # DeepSeek/火山方舟兼容：用 reasoning_content 字段输出思考内容
                 chunk = ChatCompletionResponse(
@@ -118,7 +133,7 @@ async def _completions_sse_stream(
                         )
                     ],
                 )
-                yield {"data": chunk.model_dump_json()}
+                yield {"data": chunk.model_dump_json(exclude_none=True)}
             elif event.type == "done":
                 # Final chunk with finish_reason
                 chunk = ChatCompletionResponse(
@@ -130,7 +145,7 @@ async def _completions_sse_stream(
                         ChatCompletionChoice(delta={}, finish_reason="stop")
                     ],
                 )
-                yield {"data": chunk.model_dump_json()}
+                yield {"data": chunk.model_dump_json(exclude_none=True)}
             elif event.type == "error":
                 logger.error("Chat completions stream error: %s", event.payload)
                 break

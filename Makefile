@@ -1,4 +1,4 @@
-.PHONY: install sync dev test lint format check migrate migrate-gen export-openapi docker-up docker-down
+.PHONY: install sync dev test lint format check migrate migrate-gen export-openapi export-graphs docker-up docker-down
 
 # 加载 .env.local（优先）或 .env
 ENV_FILE := $(shell if [ -f .env.local ]; then echo .env.local; elif [ -f .env ]; then echo .env; fi)
@@ -36,6 +36,9 @@ export-openapi:
 	mkdir -p docs
 	$(LOAD_ENV) uv run python -c "import json; from baize.main import app; open('docs/baize.json', 'w').write(json.dumps(app.openapi(), indent=2, ensure_ascii=False))"
 	@echo "Generated docs/baize.json"
+
+export-graphs:
+	$(LOAD_ENV) uv run python scripts/export_graphs.py
 
 docker-up:
 	docker compose up -d

@@ -129,6 +129,19 @@ class ResponseOutputText(BaseModel):
     annotations: list[Any] = Field(default_factory=list)
 
 
+class ResponseReasoningSummary(BaseModel):
+    type: str = "summary_text"
+    text: str = ""
+
+
+class ResponseOutputReasoning(BaseModel):
+    """OpenAI Responses API reasoning item (思考内容)."""
+
+    type: str = "reasoning"
+    id: str = ""
+    summary: list[ResponseReasoningSummary] = Field(default_factory=list)
+
+
 class ResponseOutputMessage(BaseModel):
     type: str = "message"
     id: str = ""
@@ -145,7 +158,7 @@ class ResponseObject(BaseModel):
     object: str = "response"
     created_at: int = 0
     model: str = ""
-    output: list[ResponseOutputMessage] = Field(default_factory=list)
+    output: list[ResponseOutputMessage | ResponseOutputReasoning] = Field(default_factory=list)
     conversation: ConversationRef | None = None
     status: str = "completed"
 

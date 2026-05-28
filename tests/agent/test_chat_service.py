@@ -196,14 +196,16 @@ async def test_chat_auto_creates_session_when_not_found() -> None:
         {"event": "on_chat_model_start", "name": "agent", "data": {}},
         {"event": "on_chat_model_stream", "name": "agent", "data": {"chunk": AIMessageChunk(content="Hi")}},
     )
+    mock_builder = MagicMock()
+    mock_builder.build.return_value = mock_graph
 
     model_router = MagicMock()
     model_router.get_chat_model.return_value = MagicMock()
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.nodes.react_node.ToolRegistry"),
+        patch("baize.agent.pipeline.react.get_graph_builder", return_value=mock_builder),
+        patch("baize.agent.pipeline.react.ToolRegistry"),
     ):
         await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 
@@ -243,14 +245,16 @@ async def test_chat_yields_error_when_tool_call_limit_exceeded() -> None:
     ]
     mock_graph = MagicMock()
     mock_graph.astream_events = _make_simple_stream(*tool_events)
+    mock_builder = MagicMock()
+    mock_builder.build.return_value = mock_graph
 
     model_router = MagicMock()
     model_router.get_chat_model.return_value = MagicMock()
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.nodes.react_node.ToolRegistry"),
+        patch("baize.agent.pipeline.react.get_graph_builder", return_value=mock_builder),
+        patch("baize.agent.pipeline.react.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 
@@ -289,14 +293,16 @@ async def test_chat_saves_user_and_assistant_messages_after_completion() -> None
         {"event": "on_chat_model_start", "name": "agent", "data": {}},
         {"event": "on_chat_model_stream", "name": "agent", "data": {"chunk": AIMessageChunk(content="Hello!")}},
     )
+    mock_builder = MagicMock()
+    mock_builder.build.return_value = mock_graph
 
     model_router = MagicMock()
     model_router.get_chat_model.return_value = MagicMock()
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.nodes.react_node.ToolRegistry"),
+        patch("baize.agent.pipeline.react.get_graph_builder", return_value=mock_builder),
+        patch("baize.agent.pipeline.react.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 
@@ -345,14 +351,16 @@ async def test_chat_yields_error_on_timeout() -> None:
 
     mock_graph = MagicMock()
     mock_graph.astream_events = timeout_stream
+    mock_builder = MagicMock()
+    mock_builder.build.return_value = mock_graph
 
     model_router = MagicMock()
     model_router.get_chat_model.return_value = MagicMock()
     svc = _make_service(agent_config_svc=agent_config_svc, session_svc=session_svc, model_router=model_router)
 
     with (
-        patch("baize.agent.nodes.react_node.build_react_graph", return_value=mock_graph),
-        patch("baize.agent.nodes.react_node.ToolRegistry"),
+        patch("baize.agent.pipeline.react.get_graph_builder", return_value=mock_builder),
+        patch("baize.agent.pipeline.react.ToolRegistry"),
     ):
         events = await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
 

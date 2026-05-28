@@ -1,7 +1,8 @@
-"""ReAct execution node — wraps the LangGraph ReAct loop with automatic tracing.
+"""Graph execution step — runs the LangGraph for the agent's type and streams ChatEvents.
 
-Streams LangGraph events and yields ChatEvents, while reporting LLM and tool
-spans to the TraceCollector in real time.
+Despite the historical name "ReactStep", this step is **graph-agnostic**: it
+looks up the graph builder by ``agent_config.agent_type`` (chat / rag / ...)
+and runs whatever graph that builder produces.
 """
 
 from __future__ import annotations
@@ -10,12 +11,12 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from baize.agent.graph import build_react_graph
-from baize.agent.nodes.base import BaseNode, NodeContext, NodeResult
+from baize.agent.graphs import get_graph_builder
+from baize.agent.pipeline.base import BaseStep, StepContext, StepResult
 from baize.agent.service import ChatEvent
 from baize.agent.tools import ToolRegistry
 
@@ -28,53 +29,48 @@ logger = logging.getLogger(__name__)
 _MAX_TOOL_CALLS = 10
 _CHAT_TIMEOUT = 120.0
 
-
-def _apply_thinking_to_llm(llm: Any, enabled: bool | None) -> Any:
-    """Bind the thinking (deep reasoning) toggle to the LLM.
-
-    Thinking is a binary on/off switch — most providers (火山方舟 / Moonshot)
-    only accept ``{"type": "enabled"}`` or ``{"type": "disabled"}``.
-
-    Args:
-        llm: LangChain chat model instance.
-        enabled: True = enable thinking, False = disable, None = use model default.
-
-    Returns:
-        LLM with bound thinking kwarg, or the original LLM when enabled is None.
-    """
-    if enabled is None:
-        # Don't touch — let the model use its own default
-        return llm
-
-    thinking = {"type": "enabled" if enabled else "disabled"}
-
-    # 火山方舟 / Moonshot / Anthropic 都走 Anthropic 协议的 thinking 字段
-    if llm.__class__.__name__ == "ChatAnthropic":
-        try:
-            return llm.bind(thinking=thinking)
-        except Exception:
-            logger.warning("Failed to bind thinking to Anthropic LLM; continuing.", exc_info=True)
-            return llm
-
-    # OpenAI 协议：用 reasoning_effort，none = 关闭
-    if llm.__class__.__name__ == "ChatOpenAI":
-        try:
-            return llm.bind(reasoning_effort="medium" if enabled else "none")
-        except Exception:
-            logger.warning("Failed to bind reasoning to OpenAI LLM; continuing.", exc_info=True)
-            return llm
-
-    return llm
+# LangChain message type → OpenAI-style role
+_LC_TYPE_TO_ROLE = {
+    "human": "user",
+    "ai": "assistant",
+    "system": "system",
+    "tool": "tool",
+    "function": "function",
+}
 
 
-class ReactNode(BaseNode):
-    """Executes the LangGraph ReAct loop, streaming ChatEvents.
+def _lc_message_role(msg) -> str:
+    """Map a LangChain message instance to an OpenAI-style role string."""
+    msg_type = getattr(msg, "type", None) or msg.__class__.__name__.lower().replace("message", "")
+    return _LC_TYPE_TO_ROLE.get(msg_type, msg_type or "user")
 
-    Unlike other nodes, this one is a generator — call ``stream()``
-    instead of ``run()`` to get ChatEvents. Tracing is still automatic.
+
+def _lc_message_content(msg) -> str:
+    """Extract text content from a LangChain message (handles list[ContentBlock])."""
+    content = getattr(msg, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(block.get("text") or block.get("thinking") or "")
+            elif hasattr(block, "text"):
+                parts.append(block.text)
+        return "".join(parts)
+    return str(content) if content else ""
+
+
+class ReactStep(BaseStep):
+    """Executes the LangGraph for the agent_type, streaming ChatEvents.
+
+    Unlike other steps, this is a generator — call ``stream()`` instead of
+    ``run()`` to get ChatEvents. Tracing is still automatic.
     """
 
-    node_name = "react"
+    step_name = "react"
 
     def __init__(
         self,
@@ -87,12 +83,8 @@ class ReactNode(BaseNode):
         self._model_name = getattr(llm, "model_name", "") or getattr(llm, "model", "")
         self._thinking = thinking
 
-    async def stream(self, ctx: NodeContext) -> AsyncIterator[ChatEvent]:
-        """Stream ChatEvents from the ReAct loop with automatic tracing.
-
-        This replaces ``run()`` for this node because it's a generator.
-        """
-        start = time.monotonic()
+    async def stream(self, ctx: StepContext) -> AsyncIterator[ChatEvent]:
+        """Stream ChatEvents from the agent's graph with automatic tracing."""
         prepared: "PreparedContext" = ctx.results["prepared"]
 
         # Resolve tools
@@ -104,9 +96,15 @@ class ReactNode(BaseNode):
         tool_entries = ToolRegistry.get_by_names(tool_names)
         tools = [e.langchain_tool for e in tool_entries if e.langchain_tool is not None]
 
-        # Build graph — apply reasoning/thinking kwargs if requested
-        llm = _apply_thinking_to_llm(self._llm, self._thinking)
-        graph = build_react_graph(llm, tools)
+        # Build graph via registry — builder applies thinking internally per its own logic
+        agent_type = getattr(self._agent_config, "agent_type", "chat") or "chat"
+        builder = get_graph_builder(agent_type)
+        graph = builder.build(
+            llm=self._llm,
+            tools=tools,
+            agent_config=self._agent_config,
+            thinking=self._thinking,
+        )
 
         # Initial messages
         initial_messages = [
@@ -128,6 +126,7 @@ class ReactNode(BaseNode):
         current_response = ""
         current_thinking = ""
         _llm_start_time: float = 0.0
+        _llm_input_messages: list[dict] = []  # captured from on_chat_model_start
         _tool_start_times: dict[str, float] = {}
         _pending_tool_args: dict[str, dict] = {}
 
@@ -148,22 +147,32 @@ class ReactNode(BaseNode):
                     if event_type == "on_chat_model_start":
                         current_response = ""
                         _llm_start_time = time.monotonic()
+                        # Capture the actual messages LangGraph is sending to the LLM
+                        # (includes system + full history + current user message + tool exchanges)
+                        _input = event.get("data", {}).get("input", {})
+                        msgs = _input.get("messages") if isinstance(_input, dict) else None
+                        if msgs and isinstance(msgs, list) and isinstance(msgs[0], list):
+                            msgs = msgs[0]  # LangChain may wrap as [[msg, msg, ...]]
+                        _llm_input_messages = [
+                            {
+                                "role": _lc_message_role(m),
+                                "content": _lc_message_content(m),
+                            }
+                            for m in (msgs or [])
+                        ]
 
                     elif event_type == "on_chat_model_stream":
                         chunk = event["data"].get("chunk")
                         if chunk is not None and hasattr(chunk, "content"):
                             raw_content = chunk.content
                             if isinstance(raw_content, str):
-                                # Plain string — always final output
                                 if raw_content:
                                     current_response += raw_content
                                     yield ChatEvent(type="token", payload={"content": raw_content})
                             elif isinstance(raw_content, list):
-                                # Content blocks — separate thinking from output
                                 for block in raw_content:
                                     block_type = block.get("type", "") if isinstance(block, dict) else getattr(block, "type", "")
                                     block_text = block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
-                                    # Also check "thinking" key (Anthropic format)
                                     if not block_text and isinstance(block, dict):
                                         block_text = block.get("thinking", "")
                                     if block_text:
@@ -182,15 +191,11 @@ class ReactNode(BaseNode):
                         latency_ms = int((time.monotonic() - _llm_start_time) * 1000)
                         output = event.get("data", {}).get("output")
                         usage = getattr(output, "usage_metadata", None) or {}
-                        # Build full input for LangFuse (system prompt + user message)
-                        llm_input = [
-                            {"role": "system", "content": prepared.system_prompt},
-                            {"role": "user", "content": ctx.message},
-                        ]
                         ctx.collector.add_llm_span(
                             model=self._model_name,
-                            input=llm_input,
+                            input=_llm_input_messages,
                             output=current_response,
+                            thinking=current_thinking,
                             prompt_tokens=usage.get("input_tokens", 0),
                             completion_tokens=usage.get("output_tokens", 0),
                             latency_ms=latency_ms,
@@ -238,14 +243,14 @@ class ReactNode(BaseNode):
             yield ChatEvent(type="error", payload={"message": "对话超时（120秒），请稍后重试。"})
             return
 
-        # Store response for downstream nodes
+        # Store response for downstream steps
         ctx.results["response"] = current_response
         ctx.results["thinking"] = current_thinking or None
 
-    # --- BaseNode abstract methods (not used for stream, but required) ---
+    # --- BaseStep abstract methods (not used for stream, but required) ---
 
-    async def _execute(self, ctx: NodeContext) -> NodeResult:
-        raise NotImplementedError("Use stream() instead of run() for ReactNode")
+    async def _execute(self, ctx: StepContext) -> StepResult:
+        raise NotImplementedError("Use stream() instead of run() for ReactStep")
 
-    def _report(self, ctx: NodeContext, result: NodeResult, latency_ms: int) -> None:
+    def _report(self, ctx: StepContext, result: StepResult, latency_ms: int) -> None:
         pass  # Reporting is done inline during stream()
