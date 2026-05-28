@@ -25,6 +25,8 @@ dependencies = [
     "langchain>=1.0.0",
     "langfuse>=2.0.0,<3.0.0",
     "structlog>=24.0.0",
+    "qdrant-client>=1.9",
+    "langchain-text-splitters>=0.3.0",
 ]
 
 [project.optional-dependencies]

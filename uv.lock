@@ -105,12 +105,14 @@ dependencies = [
     { name = "langchain-anthropic" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
+    { name = "langchain-text-splitters" },
     { name = "langfuse" },
     { name = "langgraph" },
     { name = "mem0ai" },
     { name = "pydantic-settings" },
     { name = "python-jose", extra = ["cryptography"] },
     { name = "pyyaml" },
+    { name = "qdrant-client" },
     { name = "redis" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sse-starlette" },
@@ -150,6 +152,7 @@ requires-dist = [
     { name = "langchain-anthropic", specifier = ">=0.3.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
     { name = "langchain-openai", specifier = ">=0.3.0" },
+    { name = "langchain-text-splitters", specifier = ">=0.3.0" },
     { name = "langfuse", specifier = ">=2.0.0,<3.0.0" },
     { name = "langgraph", specifier = ">=1.1.0" },
     { name = "mem0ai", specifier = ">=0.1.0" },
@@ -158,6 +161,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "qdrant-client", specifier = ">=1.9" },
     { name = "redis", specifier = ">=5.2.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
@@ -652,6 +656,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/40/cd/439be2b8deb8bd0d4c470c7c7f66698a84d823e583c3d36a322483cb7cab/langchain_openai-1.1.11.tar.gz", hash = "sha256:44b003a2960d1f6699f23721196b3b97d0c420d2e04444950869213214b7a06a", size = 1088560, upload-time = "2026-03-09T23:02:36.894Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/0f/e4cb42848c25f65969adfb500a06dea1a541831604250fd0d8aa6e54fef5/langchain_openai-1.1.11-py3-none-any.whl", hash = "sha256:a03596221405d38d6852fb865467cb0d9ff9e79f335905eb6a576e8c4874ac71", size = 87694, upload-time = "2026-03-09T23:02:35.651Z" },
+]
+
+[[package]]
+name = "langchain-text-splitters"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/38/14121ead61e0e75f79c3a35e5148ac7c2fe754a55f76eab3eed573269524/langchain_text_splitters-1.1.1.tar.gz", hash = "sha256:34861abe7c07d9e49d4dc852d0129e26b32738b60a74486853ec9b6d6a8e01d2", size = 279352, upload-time = "2026-02-18T23:02:42.798Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/66/d9e0c3b83b0ad75ee746c51ba347cacecb8d656b96e1d513f3e334d1ccab/langchain_text_splitters-1.1.1-py3-none-any.whl", hash = "sha256:5ed0d7bf314ba925041e7d7d17cd8b10f688300d5415fb26c29442f061e329dc", size = 35734, upload-time = "2026-02-18T23:02:41.913Z" },
 ]
 
 [[package]]
