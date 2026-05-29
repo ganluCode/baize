@@ -29,11 +29,12 @@ logger = logging.getLogger(__name__)
 class KnowledgeBaseService:
     """Orchestrates knowledge base business logic.
 
-    TODO: Implement methods for knowledge base CRUD, document ingestion,
-    and retrieval coordination.
+    Args:
+        db: SQLAlchemy async session for database operations.
     """
 
-    pass
+    def __init__(self, db: AsyncSession) -> None:
+        self._db = db
 
 
 class RetrievalService:

@@ -1,5 +1,35 @@
 # Progress
 
+## F4: Knowledge REST API — F-002 (Knowledge Deps)
+
+**Status**: PASSED
+
+Created `src/baize/knowledge/deps.py` with three FastAPI dependency injection factory functions:
+- `get_knowledge_base_service(db)` → `KnowledgeBaseService(db)`
+- `get_ingestion_service(db, provider_factory)` → factory callable `(KnowledgeBaseModel) -> IngestionService`
+  (async dep, awaits `get_qdrant_client()` singleton; returns factory because embedder requires KB-specific config)
+- `get_retrieval_service(db, provider_factory)` → `RetrievalService(db, qdrant, embedder_factory)`
+  (async dep, embedder_factory constructed from `provider_factory`)
+
+Also added `KnowledgeBaseService.__init__(self, db: AsyncSession)` in `service.py` (was empty placeholder).
+
+**Tests**: 745 pass, 34 pre-existing DB connection errors (same as before)
+
+---
+
+## F4: Knowledge REST API — F-001 (Knowledge Schemas)
+
+**Status**: PASSED
+
+Replaced placeholder schemas in `src/baize/knowledge/schemas.py` with full Pydantic v2 schema set:
+`KnowledgeBaseCreateRequest`, `KnowledgeBaseResponse`, `KnowledgeBaseListResponse`,
+`KnowledgeDocumentCreateRequest`, `KnowledgeDocumentResponse`, `KnowledgeDocumentListResponse`,
+`SearchRequest`, `CitationResponse`, `SearchResponse`.
+
+**Tests**: 745 pass (34 pre-existing DB connection errors in session/task integration tests, unrelated)
+
+---
+
 ## P1F8: 清单模块 (Task Module) — F-001 through F-011
 
 **Status**: ALL PASSED
