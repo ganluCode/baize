@@ -7,8 +7,8 @@ import uuid
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import PointStruct
-from sqlalchemy import select, update
+from qdrant_client.models import PointIdsList, PointStruct
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.knowledge.ingestion.chunker import ChunkPlan, HierarchicalChunker
@@ -218,6 +218,37 @@ class IngestionService:
                     "Failed to mark document %s as failed", doc_id
                 )
             raise
+
+    async def cleanup_failed_document(self, *, doc_id: uuid.UUID) -> None:
+        """Delete all chunks and Qdrant points for a document.
+
+        Does not delete the document record itself. Safe to call when the
+        document has no chunks or does not exist.
+
+        Args:
+            doc_id: The document ID whose chunks should be cleaned up.
+        """
+        result = await self._session.execute(
+            select(KnowledgeChunkModel).where(KnowledgeChunkModel.doc_id == doc_id)
+        )
+        chunks = result.scalars().all()
+
+        if not chunks:
+            return
+
+        point_ids = [str(c.qdrant_point_id) for c in chunks if c.qdrant_point_id is not None]
+        if point_ids:
+            kb_id = chunks[0].kb_id
+            collection_name = f"baize_kb_{kb_id.hex}"
+            await self._qdrant.delete(
+                collection_name=collection_name,
+                points_selector=PointIdsList(points=point_ids),
+            )
+
+        await self._session.execute(
+            delete(KnowledgeChunkModel).where(KnowledgeChunkModel.doc_id == doc_id)
+        )
+        await self._session.commit()
 
     async def ingest_file(
         self,

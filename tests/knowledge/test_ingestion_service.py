@@ -1,4 +1,4 @@
-"""Tests for IngestionService.ingest_markdown."""
+"""Tests for IngestionService.ingest_markdown and cleanup_failed_document."""
 
 import hashlib
 import uuid
@@ -243,3 +243,97 @@ async def test_qdrant_failure_preserves_committed_chunks(mock_ec, mock_session, 
 
     chunks = [m for m in mock_session._added if isinstance(m, KnowledgeChunkModel)]
     assert len(chunks) > 0
+
+
+# ── cleanup_failed_document ──
+
+def _make_chunk(kb_id: uuid.UUID, qdrant_point_id: uuid.UUID | None) -> MagicMock:
+    chunk = MagicMock(spec=KnowledgeChunkModel)
+    chunk.kb_id = kb_id
+    chunk.qdrant_point_id = qdrant_point_id
+    return chunk
+
+
+def _select_result(chunks: list) -> MagicMock:
+    scalars = MagicMock()
+    scalars.all.return_value = chunks
+    result = MagicMock()
+    result.scalars.return_value = scalars
+    return result
+
+
+async def test_cleanup_deletes_qdrant_points_and_db_chunks(mock_session, mock_embedder, mock_qdrant, kb_id):
+    doc_id = uuid.uuid4()
+    pid1, pid2 = uuid.uuid4(), uuid.uuid4()
+    chunks = [_make_chunk(kb_id, pid1), _make_chunk(kb_id, pid2)]
+
+    mock_session.execute = AsyncMock(side_effect=[_select_result(chunks), MagicMock()])
+
+    svc = _make_service(mock_session, mock_embedder, mock_qdrant)
+    await svc.cleanup_failed_document(doc_id=doc_id)
+
+    mock_qdrant.delete.assert_called_once()
+    call_kwargs = mock_qdrant.delete.call_args
+    collection_name = call_kwargs.kwargs.get("collection_name") or call_kwargs.args[0]
+    assert f"baize_kb_{kb_id.hex}" == collection_name
+    mock_session.commit.assert_called()
+
+
+async def test_cleanup_skips_none_qdrant_point_ids(mock_session, mock_embedder, mock_qdrant, kb_id):
+    doc_id = uuid.uuid4()
+    pid = uuid.uuid4()
+    chunks = [_make_chunk(kb_id, pid), _make_chunk(kb_id, None)]
+
+    mock_session.execute = AsyncMock(side_effect=[_select_result(chunks), MagicMock()])
+
+    svc = _make_service(mock_session, mock_embedder, mock_qdrant)
+    await svc.cleanup_failed_document(doc_id=doc_id)
+
+    mock_qdrant.delete.assert_called_once()
+    call_kwargs = mock_qdrant.delete.call_args
+    selector = call_kwargs.kwargs.get("points_selector") or call_kwargs.args[1]
+    assert str(pid) in selector.points
+    assert None not in selector.points
+
+
+async def test_cleanup_no_qdrant_call_when_all_point_ids_none(mock_session, mock_embedder, mock_qdrant, kb_id):
+    doc_id = uuid.uuid4()
+    chunks = [_make_chunk(kb_id, None), _make_chunk(kb_id, None)]
+
+    mock_session.execute = AsyncMock(side_effect=[_select_result(chunks), MagicMock()])
+
+    svc = _make_service(mock_session, mock_embedder, mock_qdrant)
+    await svc.cleanup_failed_document(doc_id=doc_id)
+
+    mock_qdrant.delete.assert_not_called()
+    mock_session.commit.assert_called()
+
+
+async def test_cleanup_empty_chunks_returns_normally(mock_session, mock_embedder, mock_qdrant, kb_id):
+    doc_id = uuid.uuid4()
+
+    mock_session.execute = AsyncMock(return_value=_select_result([]))
+
+    svc = _make_service(mock_session, mock_embedder, mock_qdrant)
+    await svc.cleanup_failed_document(doc_id=doc_id)
+
+    mock_qdrant.delete.assert_not_called()
+    mock_session.commit.assert_not_called()
+
+
+async def test_cleanup_does_not_delete_document_record(mock_session, mock_embedder, mock_qdrant, kb_id):
+    doc_id = uuid.uuid4()
+    chunks = [_make_chunk(kb_id, uuid.uuid4())]
+
+    mock_session.execute = AsyncMock(side_effect=[_select_result(chunks), MagicMock()])
+
+    svc = _make_service(mock_session, mock_embedder, mock_qdrant)
+    await svc.cleanup_failed_document(doc_id=doc_id)
+
+    # Verify delete was called for chunks but no KnowledgeDocumentModel delete
+    from sqlalchemy import delete as sa_delete
+    from baize.knowledge.models import KnowledgeDocumentModel as KDM
+    for call in mock_session.execute.call_args_list:
+        stmt = call.args[0] if call.args else None
+        if stmt is not None and hasattr(stmt, "table"):
+            assert stmt.table.name != KDM.__tablename__
