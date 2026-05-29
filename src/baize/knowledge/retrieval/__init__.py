@@ -5,6 +5,7 @@ from baize.knowledge.retrieval.exceptions import (
     VectorDimMismatchError,
     VectorRetrievalError,
 )
+from baize.knowledge.retrieval.expansion import expand_parents
 from baize.knowledge.retrieval.types import ScoredChunk
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "VectorRetrievalError",
     "KnowledgeBaseNotActiveError",
     "VectorDimMismatchError",
+    "expand_parents",
 ]
