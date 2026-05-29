@@ -226,6 +226,12 @@ class ReactStep(BaseStep):
                             payload={"tool": tool_name, "args": event["data"].get("input", {})},
                         )
 
+                    elif event_type == "on_chain_end":
+                        # Capture retrieved_chunks from graph node state updates (knowledge agent)
+                        output_data = event.get("data", {}).get("output", {})
+                        if isinstance(output_data, dict) and "retrieved_chunks" in output_data:
+                            ctx.results["retrieved_chunks"] = output_data["retrieved_chunks"]
+
                     elif event_type == "on_tool_end":
                         tool_name = event.get("name", "")
                         t_start = _tool_start_times.pop(tool_name, time.monotonic())

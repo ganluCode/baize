@@ -35,6 +35,7 @@ class SessionService:
         tool_calls: dict | None = None,
         tool_name: str | None = None,
         token_usage: dict | None = None,
+        message_metadata: dict | None = None,
     ) -> ChatMessageModel:
         """Persist a chat message and bump the parent session's updated_at.
 
@@ -47,6 +48,7 @@ class SessionService:
             tool_calls: Optional tool-call payload.
             tool_name: Optional tool name for tool-role messages.
             token_usage: Optional token usage metadata.
+            message_metadata: Optional message metadata (e.g. citations for knowledge agents).
 
         Returns:
             The persisted ChatMessageModel.
@@ -60,6 +62,7 @@ class SessionService:
             tool_calls=tool_calls,
             tool_name=tool_name,
             token_usage=token_usage,
+            message_metadata=message_metadata,
         )
         await self._session_repo.update(session_id, updated_at=datetime.now(UTC))
         logger.debug("Saved message %s for session %s.", msg.id, session_id)

@@ -99,6 +99,7 @@ async def test_save_message_creates_message_and_updates_session(
         tool_calls=None,
         tool_name=None,
         token_usage=None,
+        message_metadata=None,
     )
     session_repo.update.assert_called_once()
     assert result is expected_msg

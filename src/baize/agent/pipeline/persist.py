@@ -32,6 +32,21 @@ class PersistStep(BaseStep):
         response = ctx.results.get("response", "")
         thinking = ctx.results.get("thinking")
 
+        retrieved_chunks: list[dict] = ctx.results.get("retrieved_chunks") or []
+        message_metadata: dict | None = None
+        if retrieved_chunks:
+            message_metadata = {
+                "citations": [
+                    {
+                        "chunk_id": str(c.get("chunk_id", "")),
+                        "doc_id": str(c.get("doc_id", "")),
+                        "section_path": c.get("section_path", []),
+                        "score": float(c.get("score", 0.0)),
+                    }
+                    for c in retrieved_chunks
+                ]
+            }
+
         user_msg = await self._session_svc.save_message(
             session_id=self._session_id,
             user_id=self._user_id,
@@ -44,6 +59,7 @@ class PersistStep(BaseStep):
             role=MessageRole.assistant,
             content=response,
             thinking=thinking,
+            message_metadata=message_metadata,
         )
 
         ctx.results["message_id"] = str(user_msg.id)

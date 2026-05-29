@@ -138,6 +138,7 @@ class ChatMessageRepository:
         tool_calls: dict | None = None,
         tool_name: str | None = None,
         token_usage: dict | None = None,
+        message_metadata: dict | None = None,
     ) -> ChatMessageModel:
         """Insert a new chat message and return the persisted ChatMessageModel."""
         obj = ChatMessageModel(
@@ -149,6 +150,7 @@ class ChatMessageRepository:
             tool_calls=tool_calls,
             tool_name=tool_name,
             token_usage=token_usage,
+            message_metadata=message_metadata,
         )
         self._session.add(obj)
         await self._session.commit()
