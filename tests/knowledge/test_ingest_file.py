@@ -1,4 +1,4 @@
-"""Tests for IngestionService.ingest_file (F-010)."""
+"""Tests for IngestionService.ingest_file (F-010, F-019)."""
 
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +12,8 @@ from baize.knowledge.ingestion.converters import (
 )
 from baize.knowledge.ingestion.converters._types import ConvertedDocument
 from baize.knowledge.ingestion.service import IngestionService
+from baize.knowledge.models import KnowledgeChunkModel, KnowledgeDocumentModel
+from tests.knowledge.fixtures.conftest import sample_docx_bytes, sample_pdf_bytes
 
 DIM = 1536
 
@@ -264,3 +266,52 @@ async def test_returns_uuid(
     )
 
     assert isinstance(result, uuid.UUID)
+
+
+# ── real converter chain with fixture bytes (F-019) ──
+
+
+@patch("baize.knowledge.ingestion.service.ensure_collection", new_callable=AsyncMock)
+async def test_ingest_file_docx_real_converter_writes_chunks_and_warnings(
+    mock_ec, mock_session, mock_embedder, mock_qdrant, kb_id
+):
+    """传入真实 .docx 字节，通过真实 mammoth converter，chunks 落库且 doc_metadata 含 converter_warnings 键。"""
+    svc = _make_service(mock_session, mock_embedder, mock_qdrant)
+    doc_id = await svc.ingest_file(
+        kb_id=kb_id,
+        title="Sample Docx",
+        raw_bytes=sample_docx_bytes(),
+        source_type="docx",
+    )
+
+    assert isinstance(doc_id, uuid.UUID)
+
+    docs = [m for m in mock_session._added if isinstance(m, KnowledgeDocumentModel)]
+    assert len(docs) == 1
+    assert "converter_warnings" in docs[0].doc_metadata
+
+    chunks = [m for m in mock_session._added if isinstance(m, KnowledgeChunkModel)]
+    assert len(chunks) > 0
+
+
+@patch("baize.knowledge.ingestion.service.ensure_collection", new_callable=AsyncMock)
+async def test_ingest_file_pdf_real_converter_writes_chunks(
+    mock_ec, mock_session, mock_embedder, mock_qdrant, kb_id
+):
+    """传入真实 .pdf 字节，通过真实 pypdf converter，chunks 落库。"""
+    svc = _make_service(mock_session, mock_embedder, mock_qdrant)
+    doc_id = await svc.ingest_file(
+        kb_id=kb_id,
+        title="Sample PDF",
+        raw_bytes=sample_pdf_bytes(),
+        source_type="pdf",
+    )
+
+    assert isinstance(doc_id, uuid.UUID)
+
+    docs = [m for m in mock_session._added if isinstance(m, KnowledgeDocumentModel)]
+    assert len(docs) == 1
+    assert "converter_warnings" in docs[0].doc_metadata
+
+    chunks = [m for m in mock_session._added if isinstance(m, KnowledgeChunkModel)]
+    assert len(chunks) > 0
