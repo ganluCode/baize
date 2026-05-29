@@ -349,3 +349,48 @@ class TestAutoMemoryRecall:
             })
 
         assert result["messages"][-1].content == "ok"
+
+
+class TestRetrievedChunksState:
+    """Tests for the retrieved_chunks field in AgentState (F-001)."""
+
+    async def test_chat_graph_runs_without_retrieved_chunks(self):
+        """Chat graph should run normally when retrieved_chunks is absent from initial state."""
+        llm = _make_mock_llm([AIMessage(content="hello")])
+        graph = _build_react_graph(llm, [])
+
+        result = await graph.ainvoke({
+            "messages": [HumanMessage(content="hi")],
+            "user_id": "u-1",
+            "agent_id": "a-1",
+        })
+
+        assert result["messages"][-1].content == "hello"
+
+    async def test_retrieved_chunks_passed_through_state(self):
+        """When retrieved_chunks is set in initial state, it should be in the result."""
+        llm = _make_mock_llm([AIMessage(content="answer")])
+        graph = _build_react_graph(llm, [])
+
+        chunks = [{"chunk_id": "c1", "doc_id": "d1", "section_path": ["intro"], "score": 0.9, "content": "text"}]
+        result = await graph.ainvoke({
+            "messages": [HumanMessage(content="question")],
+            "user_id": "u-1",
+            "agent_id": "a-1",
+            "retrieved_chunks": chunks,
+        })
+
+        assert result.get("retrieved_chunks") == chunks
+
+    async def test_retrieved_chunks_default_empty_list_when_absent(self):
+        """retrieved_chunks defaults to empty list when not provided in initial state."""
+        llm = _make_mock_llm([AIMessage(content="ok")])
+        graph = _build_react_graph(llm, [])
+
+        result = await graph.ainvoke({
+            "messages": [HumanMessage(content="hello")],
+            "user_id": "u-1",
+            "agent_id": "a-1",
+        })
+
+        assert result.get("retrieved_chunks", []) == []

@@ -24,9 +24,15 @@ class AgentState(TypedDict):
         shared_memory: Whether memories saved in this session are shared (visible
                        to all agents for the user) or private to the current agent.
                        Defaults to True when not provided.
+        retrieved_chunks: Knowledge chunks retrieved for the current turn. Each
+                          chunk is a plain dict with at least ``chunk_id``,
+                          ``doc_id``, ``section_path``, ``score``, and
+                          ``content`` keys. Defaults to empty list when not
+                          provided.
     """
 
     messages: Annotated[Sequence[BaseMessage], add_messages]
     user_id: str
     agent_id: str
     shared_memory: NotRequired[bool]
+    retrieved_chunks: NotRequired[list[dict]]
