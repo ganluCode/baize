@@ -376,6 +376,160 @@ class IngestionService:
         )
         await self._session.commit()
 
+    async def process_pending_document_from_file(
+        self,
+        *,
+        doc_id: uuid.UUID,
+        kb_id: uuid.UUID,
+        raw_bytes: bytes,
+        source_type: str,
+    ) -> None:
+        """Process an already-created pending document from raw file bytes.
+
+        Converts the bytes to Markdown, stores converter_warnings in doc_metadata,
+        runs duplicate detection on the converted content, then runs the full
+        chunk/embed/store pipeline. Sets status='ingesting' before processing.
+
+        On success: status='ingested' with chunk_count.
+        On failure: status='failed' with error_message, calls cleanup_failed_document.
+
+        Args:
+            doc_id: ID of the pending document (already exists in DB).
+            kb_id: Knowledge base ID.
+            raw_bytes: Raw bytes of the uploaded file.
+            source_type: Source type string ('markdown', 'raw_text', 'docx', 'pdf').
+        """
+        kb = await self._session.get(KnowledgeBaseModel, kb_id)
+        if kb is None:
+            raise ValueError(f"Knowledge base {kb_id} not found")
+
+        doc = await self._session.get(KnowledgeDocumentModel, doc_id)
+        if doc is None:
+            raise ValueError(f"Document {doc_id} not found")
+
+        doc.status = "ingesting"
+        await self._session.commit()
+
+        try:
+            converted = await convert_to_markdown(source_type=source_type, raw_bytes=raw_bytes)
+
+            meta = dict(doc.doc_metadata or {})
+            meta["converter_warnings"] = converted.warnings
+            doc.doc_metadata = meta
+
+            content = converted.markdown
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            doc.content_hash = content_hash
+
+            result = await self._session.execute(
+                select(KnowledgeDocumentModel).where(
+                    KnowledgeDocumentModel.kb_id == kb_id,
+                    KnowledgeDocumentModel.content_hash == content_hash,
+                    KnowledgeDocumentModel.status == "ingested",
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing is not None:
+                raise DocumentAlreadyExistsError(
+                    f"Document with same content already ingested: existing_doc_id={existing.id}"
+                )
+
+            parsed = MarkdownParser.parse(doc.title, content)
+            chunk_plans = HierarchicalChunker().chunk(parsed)
+
+            if not chunk_plans:
+                doc.status = "ingested"
+                doc.chunk_count = 0
+                await self._session.commit()
+                return
+
+            texts = [cp.content for cp in chunk_plans]
+            all_vectors: list[list[float]] = []
+            for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+                batch = texts[i : i + _EMBED_BATCH_SIZE]
+                vectors = await self._embedder.embed_documents(batch)
+                all_vectors.extend(vectors)
+
+            if all_vectors and len(all_vectors[0]) != kb.embedding_dim:
+                raise VectorDimMismatchError(
+                    f"Embedder returned dim={len(all_vectors[0])}, "
+                    f"KB expects dim={kb.embedding_dim} (dim mismatch)"
+                )
+
+            local_to_db: dict[str, uuid.UUID] = {}
+            chunk_models: list[KnowledgeChunkModel] = []
+            for cp in chunk_plans:
+                chunk_uuid = uuid.uuid4()
+                parent_db_id = (
+                    local_to_db.get(cp.parent_local_id) if cp.parent_local_id else None
+                )
+                chunk = KnowledgeChunkModel(
+                    id=chunk_uuid,
+                    kb_id=kb_id,
+                    doc_id=doc_id,
+                    parent_chunk_id=parent_db_id,
+                    level=cp.level,
+                    section_path=(
+                        json.dumps(cp.section_path, ensure_ascii=False)
+                        if cp.section_path
+                        else None
+                    ),
+                    content=cp.content,
+                )
+                self._session.add(chunk)
+                local_to_db[cp.local_id] = chunk_uuid
+                chunk_models.append(chunk)
+            await self._session.flush()
+            await self._session.commit()
+
+            collection_name = f"baize_kb_{kb_id.hex}"
+            await ensure_collection(collection_name, kb.embedding_dim, client=self._qdrant)
+
+            point_id_map: dict[uuid.UUID, uuid.UUID] = {}
+            points: list[PointStruct] = []
+            for cp, chunk_model, vector in zip(chunk_plans, chunk_models, all_vectors):
+                point_id = uuid.uuid4()
+                point_id_map[chunk_model.id] = point_id
+                points.append(
+                    PointStruct(
+                        id=str(point_id),
+                        vector=vector,
+                        payload={
+                            "chunk_id": str(chunk_model.id),
+                            "doc_id": str(doc_id),
+                            "kb_id": str(kb_id),
+                            "content": cp.content,
+                            "level": cp.level,
+                            "section_path": cp.section_path,
+                        },
+                    )
+                )
+
+            await self._qdrant.upsert(collection_name=collection_name, points=points)
+
+            for chunk_model in chunk_models:
+                chunk_model.qdrant_point_id = point_id_map[chunk_model.id]
+
+            doc.status = "ingested"
+            doc.chunk_count = len(chunk_models)
+            await self._session.commit()
+
+        except Exception as exc:
+            await self._session.rollback()
+            try:
+                await self._session.execute(
+                    update(KnowledgeDocumentModel)
+                    .where(KnowledgeDocumentModel.id == doc_id)
+                    .values(status="failed", error_message=str(exc)[:2000])
+                )
+                await self._session.commit()
+                await self.cleanup_failed_document(doc_id=doc_id)
+            except Exception:
+                logger.exception(
+                    "Failed to mark document %s as failed after file ingestion error", doc_id
+                )
+            raise
+
     async def ingest_file(
         self,
         *,

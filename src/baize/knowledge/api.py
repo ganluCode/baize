@@ -1,12 +1,16 @@
 """Knowledge Base CRUD API routes."""
 
 import hashlib
+import io
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi import status as http_status
+from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +29,15 @@ from baize.knowledge.service import KnowledgeBaseService, KnowledgeBaseServiceEr
 from baize.llm.provider import ProviderFactory
 from baize.user.deps import get_current_user
 from baize.user.models import UserModel
+
+_EXTENSION_TO_SOURCE_TYPE: dict[str, str] = {
+    ".md": "markdown",
+    ".txt": "raw_text",
+    ".docx": "docx",
+    ".pdf": "pdf",
+}
+_SUPPORTED_EXTENSIONS = sorted(_EXTENSION_TO_SOURCE_TYPE.keys())
+_MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 logger = logging.getLogger(__name__)
 
@@ -265,3 +278,170 @@ async def _bg_ingest_document(
             )
         except Exception:
             logger.exception("Background ingestion failed for document %s", doc_id)
+
+
+@router.post(
+    "/{kb_id}/documents/upload",
+    response_model=KnowledgeDocumentResponse,
+    status_code=http_status.HTTP_202_ACCEPTED,
+)
+async def upload_document(
+    kb_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str | None = Form(None),
+    source_uri: str | None = Form(None),
+    doc_metadata: str | None = Form(None),
+    current_user: UserModel = Depends(get_current_user),
+    svc: KnowledgeBaseService = Depends(get_knowledge_base_service),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Upload a file to a knowledge base via multipart/form-data.
+
+    Performs synchronous pre-checks (format, size, encoding, encryption) and
+    returns 202 immediately after creating a pending document. Ingestion is
+    processed asynchronously in the background.
+
+    Returns:
+        202 Accepted + KnowledgeDocumentResponse with status='pending'.
+
+    Raises:
+        HTTPException: 415 if file extension is not .md/.txt/.docx/.pdf.
+        HTTPException: 413 if file exceeds 10 MB.
+        HTTPException: 400 if .md/.txt file is not UTF-8 encoded.
+        HTTPException: 400 if .pdf file is encrypted.
+        HTTPException: 403 if KB belongs to another user.
+        HTTPException: 404 if KB not found or deleted.
+    """
+    logger.info(
+        "POST /knowledge-bases/%s/documents/upload user_id=%s filename=%s",
+        kb_id,
+        current_user.id,
+        file.filename,
+    )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    source_type = _EXTENSION_TO_SOURCE_TYPE.get(suffix)
+    if source_type is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                f"Unsupported file format '{suffix}'. "
+                f"Supported formats: {', '.join(_SUPPORTED_EXTENSIONS)}"
+            ),
+        )
+
+    raw_bytes = await file.read()
+
+    if len(raw_bytes) > _MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File size exceeds the 10 MB limit.",
+        )
+
+    if suffix in {".md", ".txt"}:
+        try:
+            raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail="File must be encoded in UTF-8. Please re-save the file with UTF-8 encoding.",
+            )
+
+    if suffix == ".pdf":
+        reader = PdfReader(io.BytesIO(raw_bytes))
+        if reader.is_encrypted:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail="Encrypted PDF files are not supported. Please decrypt the file before uploading.",
+            )
+
+    try:
+        await svc.get(kb_id=kb_id, user_id=current_user.id)
+    except KnowledgeBaseServiceError as exc:
+        raise _service_error_to_http(exc) from exc
+
+    effective_title = title if title else Path(file.filename or "upload").stem
+
+    parsed_metadata: dict | None = None
+    if doc_metadata:
+        try:
+            parsed_metadata = json.loads(doc_metadata)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON in doc_metadata: {exc}",
+            )
+
+    content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+    now = datetime.now(UTC)
+    doc = KnowledgeDocumentModel(
+        id=uuid.uuid4(),
+        kb_id=kb_id,
+        title=effective_title,
+        source_type=source_type,
+        source_uri=source_uri,
+        content_hash=content_hash,
+        doc_metadata=parsed_metadata if parsed_metadata is not None else {},
+        status="pending",
+        chunk_count=0,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(doc)
+    await db.commit()
+
+    background_tasks.add_task(
+        _bg_ingest_file,
+        doc_id=doc.id,
+        kb_id=kb_id,
+        raw_bytes=raw_bytes,
+        source_type=source_type,
+    )
+
+    return KnowledgeDocumentResponse.model_validate(doc)
+
+
+async def _bg_ingest_file(
+    *,
+    doc_id: uuid.UUID,
+    kb_id: uuid.UUID,
+    raw_bytes: bytes,
+    source_type: str,
+) -> None:
+    """Background task: convert a file and process it through the ingestion pipeline."""
+    from baize.core.database import AsyncSessionLocal
+    from baize.core.deps import get_container
+    from baize.knowledge.ingestion.embedder import KnowledgeEmbedder
+    from baize.knowledge.ingestion.qdrant_client import get_qdrant_client
+    from baize.knowledge.ingestion.service import IngestionService
+    from baize.knowledge.models import KnowledgeBaseModel
+
+    async with AsyncSessionLocal() as session:
+        kb = await session.get(KnowledgeBaseModel, kb_id)
+        if kb is None:
+            logger.error(
+                "Background file ingestion: KB %s not found for doc %s", kb_id, doc_id
+            )
+            return
+
+        container = get_container()
+        embedder = KnowledgeEmbedder(
+            provider_name=kb.embedding_provider,
+            model_id=kb.embedding_model,
+            expected_dim=kb.embedding_dim,
+            llm_provider_manager=container.provider_factory,
+        )
+        qdrant = await get_qdrant_client()
+        ingestion_svc = IngestionService(session=session, embedder=embedder, qdrant=qdrant)
+
+        try:
+            await ingestion_svc.process_pending_document_from_file(
+                doc_id=doc_id,
+                kb_id=kb_id,
+                raw_bytes=raw_bytes,
+                source_type=source_type,
+            )
+        except Exception:
+            logger.exception("Background file ingestion failed for document %s", doc_id)
