@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,18 +18,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.core.database import get_db
 from baize.core.deps import get_provider_factory
-from baize.knowledge.deps import get_knowledge_base_service
+from baize.knowledge.deps import get_knowledge_base_service, get_retrieval_service
 from baize.knowledge.ingestion.qdrant_client import get_qdrant_client
 from baize.knowledge.models import KnowledgeChunkModel, KnowledgeDocumentModel
 from baize.knowledge.schemas import (
+    CitationResponse,
     KnowledgeBaseCreateRequest,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
     KnowledgeDocumentCreateRequest,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
+    SearchRequest,
+    SearchResponse,
 )
-from baize.knowledge.service import KnowledgeBaseService, KnowledgeBaseServiceError
+from baize.knowledge.service import KnowledgeBaseService, KnowledgeBaseServiceError, RetrievalService
 from baize.llm.provider import ProviderFactory
 from baize.user.deps import get_current_user
 from baize.user.models import UserModel
@@ -610,3 +614,82 @@ async def _bg_ingest_file(
             )
         except Exception:
             logger.exception("Background file ingestion failed for document %s", doc_id)
+
+
+@router.post("/{kb_id}/search", response_model=SearchResponse)
+async def search_knowledge_base(
+    kb_id: uuid.UUID,
+    body: SearchRequest,
+    current_user: UserModel = Depends(get_current_user),
+    svc: KnowledgeBaseService = Depends(get_knowledge_base_service),
+    retrieval_svc: RetrievalService = Depends(get_retrieval_service),
+    db: AsyncSession = Depends(get_db),
+) -> SearchResponse:
+    """Search a knowledge base using hybrid BM25 + vector retrieval.
+
+    Returns:
+        SearchResponse with query, ranked CitationResponse list, total, and latency_ms.
+
+    Raises:
+        HTTPException: 403 if KB belongs to another user.
+        HTTPException: 404 if KB not found or deleted.
+    """
+    logger.info(
+        "POST /knowledge-bases/%s/search user_id=%s", kb_id, current_user.id
+    )
+
+    try:
+        await svc.get(kb_id=kb_id, user_id=current_user.id)
+    except KnowledgeBaseServiceError as exc:
+        raise _service_error_to_http(exc) from exc
+
+    from baize.core.observability import TraceCollector
+
+    tracer = TraceCollector(
+        user_id=str(current_user.id),
+        session_id=str(kb_id),
+        agent_id="knowledge-search",
+    )
+    tracer.set_input(body.query)
+
+    start = time.monotonic()
+    chunks = await retrieval_svc.search(
+        kb_id=kb_id,
+        query=body.query,
+        top_k=body.top_k,
+        include_parents=body.include_parents,
+        tracer=tracer,
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    doc_ids = {c.doc_id for c in chunks}
+    doc_title_map: dict[uuid.UUID, str] = {}
+    if doc_ids:
+        rows_result = await db.execute(
+            select(KnowledgeDocumentModel.id, KnowledgeDocumentModel.title).where(
+                KnowledgeDocumentModel.id.in_(doc_ids)
+            )
+        )
+        for row_doc_id, row_title in rows_result.all():
+            doc_title_map[row_doc_id] = row_title
+
+    results = [
+        CitationResponse(
+            doc_title=doc_title_map.get(c.doc_id, ""),
+            chunk_id=c.chunk_id,
+            doc_id=c.doc_id,
+            section_path=c.section_path,
+            score=c.score,
+            sources=c.sources,
+        )
+        for c in chunks
+    ]
+
+    tracer.finalize(output=f"{len(results)} results")
+
+    return SearchResponse(
+        query=body.query,
+        results=results,
+        total=len(results),
+        latency_ms=latency_ms,
+    )
