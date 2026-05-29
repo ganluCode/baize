@@ -441,3 +441,56 @@ class TestGraphBuilderServicesParam:
         assert hasattr(mod, "GraphBuilder")
         assert hasattr(mod, "register_graph")
         assert hasattr(mod, "get_graph_builder")
+
+
+class TestChatReactGraphServicesParam:
+    """Tests for F-003: ChatReactGraph.build() services parameter."""
+
+    def test_chat_react_graph_build_has_services_param(self):
+        """ChatReactGraph.build() signature includes services parameter."""
+        import inspect
+        from baize.agent.graphs.chat_react import ChatReactGraph
+
+        sig = inspect.signature(ChatReactGraph.build)
+        assert "services" in sig.parameters
+
+    def test_chat_react_graph_services_param_default_is_none(self):
+        """ChatReactGraph.build() services parameter defaults to None."""
+        import inspect
+        from baize.agent.graphs.chat_react import ChatReactGraph
+
+        sig = inspect.signature(ChatReactGraph.build)
+        param = sig.parameters["services"]
+        assert param.default is None
+
+    def test_chat_react_graph_build_callable_with_services_none(self):
+        """ChatReactGraph.build() accepts services=None without error."""
+        from unittest.mock import MagicMock
+        from baize.agent.graphs.chat_react import ChatReactGraph
+
+        builder = ChatReactGraph()
+        llm = _make_mock_llm([])
+        agent_config = MagicMock()
+
+        graph = builder.build(
+            llm=llm,
+            tools=[],
+            agent_config=agent_config,
+            services=None,
+        )
+        assert hasattr(graph, "ainvoke")
+
+    def test_chat_react_graph_services_and_no_services_same_result(self):
+        """Passing services=None and omitting services produce equivalent graphs."""
+        from unittest.mock import MagicMock
+        from baize.agent.graphs.chat_react import ChatReactGraph
+
+        builder = ChatReactGraph()
+        llm = _make_mock_llm([])
+        agent_config = MagicMock()
+
+        graph_without = builder.build(llm=llm, tools=[], agent_config=agent_config)
+        graph_with = builder.build(llm=llm, tools=[], agent_config=agent_config, services=None)
+
+        assert hasattr(graph_without, "ainvoke")
+        assert hasattr(graph_with, "ainvoke")

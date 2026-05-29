@@ -36,6 +36,7 @@ class ChatReactGraph(GraphBuilder):
         agent_config: "AgentConfig",
         thinking: bool | None = None,
         checkpointer: Any | None = None,
+        services: dict[str, Any] | None = None,
     ) -> Any:
         llm = self._bind_thinking(llm, thinking)
         llm_node = build_llm_node(llm, tools, auto_memory_recall=False)
