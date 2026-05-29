@@ -47,6 +47,10 @@ class AgentConfig(Base):
     # 记忆策略（合并原 auto_memory_recall + shared_memory）
     memory_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # 知识库配置（agent_type=knowledge 时使用）
+    # 语义：{default_kb_id: UUID, top_k: int, include_parents: bool}
+    knowledge_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     # 执行护栏
     guardrails: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 

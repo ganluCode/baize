@@ -76,6 +76,11 @@ class TestAgentConfigColumns:
         assert col.nullable
         assert isinstance(col.type, JSONB)
 
+    def test_knowledge_config_jsonb_nullable(self):
+        col = _col("knowledge_config")
+        assert col.nullable
+        assert isinstance(col.type, JSONB)
+
     def test_sub_agents_jsonb_nullable(self):
         col = _col("sub_agents")
         assert col.nullable
