@@ -394,3 +394,50 @@ class TestRetrievedChunksState:
         })
 
         assert result.get("retrieved_chunks", []) == []
+
+
+class TestGraphBuilderServicesParam:
+    """Tests for F-002: GraphBuilder.build() services parameter."""
+
+    def test_build_abstract_method_has_services_param(self):
+        """GraphBuilder.build() abstract method signature includes services parameter."""
+        import inspect
+        from baize.agent.graphs.base import GraphBuilder
+
+        sig = inspect.signature(GraphBuilder.build)
+        assert "services" in sig.parameters
+
+    def test_services_param_default_is_none(self):
+        """services parameter defaults to None."""
+        import inspect
+        from baize.agent.graphs.base import GraphBuilder
+
+        sig = inspect.signature(GraphBuilder.build)
+        param = sig.parameters["services"]
+        assert param.default is None
+
+    def test_chat_react_graph_build_callable_without_services(self):
+        """Existing ChatReactGraph.build() works when services is not passed."""
+        from unittest.mock import MagicMock
+
+        from baize.agent.graphs.chat_react import ChatReactGraph
+
+        builder = ChatReactGraph()
+        llm = _make_mock_llm([])
+        agent_config = MagicMock()
+        agent_config.tools = []
+
+        graph = builder.build(
+            llm=llm,
+            tools=[],
+            agent_config=agent_config,
+        )
+        assert hasattr(graph, "ainvoke")
+
+    def test_graph_builder_module_imports_without_error(self):
+        """baize.agent.graphs.base imports cleanly."""
+        import importlib
+        mod = importlib.import_module("baize.agent.graphs.base")
+        assert hasattr(mod, "GraphBuilder")
+        assert hasattr(mod, "register_graph")
+        assert hasattr(mod, "get_graph_builder")

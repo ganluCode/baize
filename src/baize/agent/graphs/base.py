@@ -43,6 +43,7 @@ class GraphBuilder(ABC):
         agent_config: "AgentConfig",
         thinking: bool | None = None,
         checkpointer: Any | None = None,
+        services: dict[str, Any] | None = None,
     ) -> Any:
         """Compile and return a LangGraph ready to execute.
 
@@ -53,6 +54,9 @@ class GraphBuilder(ABC):
             thinking: Deep reasoning toggle for this request. True=enable,
                 False=disable, None=use model default.
             checkpointer: Optional LangGraph checkpointer.
+            services: Optional service map (e.g. ``{"retrieval": RetrievalService}``).
+                Graph builders that require services (e.g. knowledge graph) read
+                their dependencies from this dict; others ignore it.
 
         Returns:
             A compiled LangGraph instance (``CompiledGraph``).
