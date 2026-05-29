@@ -5,6 +5,7 @@ FastAPI ``Depends`` calls to the global :class:`~baize.core.container.Container`
 instance initialised in the application lifespan.
 """
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import Depends
@@ -120,11 +121,46 @@ def get_context_service(
     )
 
 
+def get_retrieval_svc_factory(
+    db: AsyncSession = Depends(get_db),
+    provider_factory: ProviderFactory = Depends(get_provider_factory),
+) -> Callable[[], Awaitable[Any]]:
+    """Return a lazy factory that creates RetrievalService on first call.
+
+    Qdrant is only connected when the factory is invoked (i.e. for knowledge
+    agents), so chat-only requests have zero knowledge-layer overhead.
+    """
+    async def make() -> Any:
+        from baize.knowledge.ingestion.embedder import KnowledgeEmbedder
+        from baize.knowledge.ingestion.qdrant_client import get_qdrant_client
+        from baize.knowledge.models import KnowledgeBaseModel
+        from baize.knowledge.service import RetrievalService
+
+        qdrant = await get_qdrant_client()
+
+        def make_embedder(kb: KnowledgeBaseModel) -> KnowledgeEmbedder:
+            return KnowledgeEmbedder(
+                provider_name=kb.embedding_provider,
+                model_id=kb.embedding_model,
+                expected_dim=kb.embedding_dim,
+                llm_provider_manager=provider_factory,
+            )
+
+        return RetrievalService(
+            db_session=db,
+            qdrant_client=qdrant,
+            embedder_factory=make_embedder,
+        )
+
+    return make
+
+
 def get_agent_service(
     db: AsyncSession = Depends(get_db),
     model_router: ModelRouter = Depends(get_model_router),
     memory_service: MemoryServiceInterface | None = Depends(get_memory_service),
     context_service: ContextService = Depends(get_context_service),
+    retrieval_svc_factory: Callable[[], Awaitable[Any]] = Depends(get_retrieval_svc_factory),
 ) -> AgentService:
     """Dependency factory for AgentService — builds a per-request instance."""
     agent_repo = AgentConfigRepository(db)
@@ -138,4 +174,5 @@ def get_agent_service(
         memory_service=memory_service,
         model_router=model_router,
         context_service=context_service,
+        retrieval_svc_provider=retrieval_svc_factory,
     )

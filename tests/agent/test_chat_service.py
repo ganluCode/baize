@@ -83,6 +83,7 @@ def _make_service(
     memory_svc: MemoryServiceInterface | None = None,
     model_router=None,
     context_svc=None,
+    retrieval_svc_provider=None,
 ) -> AgentService:
     if model_router is None:
         mr = MagicMock()
@@ -110,6 +111,7 @@ def _make_service(
         memory_service=memory_svc,
         model_router=model_router,
         context_service=context_svc,
+        retrieval_svc_provider=retrieval_svc_provider,
     )
 
 
@@ -366,3 +368,105 @@ async def test_chat_yields_error_on_timeout() -> None:
 
     error_events = [e for e in events if e.type == "error"]
     assert len(error_events) == 1
+
+
+# ---------------------------------------------------------------------------
+# retrieval_svc_provider injection (F-011)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chat_knowledge_agent_calls_retrieval_provider_and_injects() -> None:
+    """chat() for a knowledge agent calls retrieval_svc_provider and injects it into build()."""
+    user_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    user = _make_user(user_id)
+    agent = _make_agent(user_id=user_id, agent_id=agent_id)
+    agent.agent_type = "knowledge"
+    agent.knowledge_config = {"default_kb_id": str(uuid.uuid4()), "top_k": 8, "include_parents": True}
+    session = _make_session(user_id, agent_id)
+
+    mock_retrieval_svc = MagicMock()
+    mock_provider = AsyncMock(return_value=mock_retrieval_svc)
+
+    agent_config_svc = AsyncMock(spec=AgentConfigService)
+    agent_config_svc.get.return_value = agent
+
+    session_svc = AsyncMock(spec=SessionService)
+    session_svc.get_session.return_value = session
+    session_svc.save_message = AsyncMock(return_value=MagicMock(id=uuid.uuid4()))
+
+    mock_graph = MagicMock()
+    mock_graph.astream_events = _make_simple_stream(
+        {"event": "on_chat_model_start", "name": "agent", "data": {}},
+        {"event": "on_chat_model_stream", "name": "agent", "data": {"chunk": AIMessageChunk(content="Answer")}},
+    )
+    mock_builder = MagicMock()
+    mock_builder.build.return_value = mock_graph
+
+    model_router = MagicMock()
+    model_router.get_chat_model.return_value = MagicMock()
+    svc = _make_service(
+        agent_config_svc=agent_config_svc,
+        session_svc=session_svc,
+        model_router=model_router,
+        retrieval_svc_provider=mock_provider,
+    )
+
+    with (
+        patch("baize.agent.pipeline.react.get_graph_builder", return_value=mock_builder),
+        patch("baize.agent.pipeline.react.ToolRegistry"),
+    ):
+        await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
+
+    mock_provider.assert_called_once()
+    services_arg = mock_builder.build.call_args.kwargs.get("services")
+    assert services_arg is not None
+    assert services_arg.get("retrieval") is mock_retrieval_svc
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_does_not_call_retrieval_provider() -> None:
+    """chat() for a chat agent does NOT call retrieval_svc_provider."""
+    user_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    user = _make_user(user_id)
+    agent = _make_agent(user_id=user_id, agent_id=agent_id)
+    # agent_type is "chat" by default
+    session = _make_session(user_id, agent_id)
+
+    mock_provider = AsyncMock(return_value=MagicMock())
+
+    agent_config_svc = AsyncMock(spec=AgentConfigService)
+    agent_config_svc.get.return_value = agent
+
+    session_svc = AsyncMock(spec=SessionService)
+    session_svc.get_session.return_value = session
+    session_svc.save_message = AsyncMock(return_value=MagicMock(id=uuid.uuid4()))
+
+    mock_graph = MagicMock()
+    mock_graph.astream_events = _make_simple_stream(
+        {"event": "on_chat_model_start", "name": "agent", "data": {}},
+        {"event": "on_chat_model_stream", "name": "agent", "data": {"chunk": AIMessageChunk(content="Hello")}},
+    )
+    mock_builder = MagicMock()
+    mock_builder.build.return_value = mock_graph
+
+    model_router = MagicMock()
+    model_router.get_chat_model.return_value = MagicMock()
+    svc = _make_service(
+        agent_config_svc=agent_config_svc,
+        session_svc=session_svc,
+        model_router=model_router,
+        retrieval_svc_provider=mock_provider,
+    )
+
+    with (
+        patch("baize.agent.pipeline.react.get_graph_builder", return_value=mock_builder),
+        patch("baize.agent.pipeline.react.ToolRegistry"),
+    ):
+        await _collect(svc.chat(agent_id, uuid.uuid4(), user_id, "hello", user))
+
+    mock_provider.assert_not_called()
+    services_arg = mock_builder.build.call_args.kwargs.get("services")
+    assert services_arg is None

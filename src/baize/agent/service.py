@@ -6,10 +6,10 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from fastapi import HTTPException
@@ -23,6 +23,7 @@ from baize.session.service import SessionService
 
 if TYPE_CHECKING:
     from baize.context.service import ContextService
+    from baize.knowledge.service import RetrievalService
     from baize.llm.model_router import ModelRouter
     from baize.memory.interface import MemoryServiceInterface
     from baize.user.models import UserModel
@@ -298,15 +299,17 @@ class AgentService:
         self,
         agent_config_service: AgentConfigService,
         session_service: SessionService,
-        memory_service: MemoryServiceInterface | None,
-        model_router: ModelRouter,
-        context_service: ContextService,
+        memory_service: "MemoryServiceInterface | None",
+        model_router: "ModelRouter",
+        context_service: "ContextService",
+        retrieval_svc_provider: "Callable[[], Awaitable[RetrievalService]] | None" = None,
     ) -> None:
         self._agent_config_svc = agent_config_service
         self._session_svc = session_service
         self._memory_svc = memory_service
         self._model_router = model_router
         self._context_svc = context_service
+        self._retrieval_svc_provider = retrieval_svc_provider
 
     def _resolve_llm(self, agent_config: AgentConfig):
         """Resolve the chat LLM using the agent's model_config, falling back to 'default'."""
@@ -426,7 +429,11 @@ class AgentService:
             return
 
         # 6. Step: Graph execution (streams ChatEvents, reports LLM/tool spans)
-        react_step = ReactStep(llm=llm, agent_config=agent_config, thinking=thinking)
+        agent_type = getattr(agent_config, "agent_type", "chat") or "chat"
+        retrieval_svc = None
+        if agent_type == "knowledge" and self._retrieval_svc_provider is not None:
+            retrieval_svc = await self._retrieval_svc_provider()
+        react_step = ReactStep(llm=llm, agent_config=agent_config, thinking=thinking, retrieval_svc=retrieval_svc)
         try:
             async for chat_event in react_step.stream(ctx):
                 yield chat_event

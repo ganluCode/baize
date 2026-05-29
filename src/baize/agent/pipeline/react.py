@@ -23,6 +23,7 @@ from baize.agent.tools import ToolRegistry
 if TYPE_CHECKING:
     from baize.agent.models import AgentConfig
     from baize.context.service import PreparedContext
+    from baize.knowledge.service import RetrievalService
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +78,13 @@ class ReactStep(BaseStep):
         llm,
         agent_config: "AgentConfig",
         thinking: bool | None = None,
+        retrieval_svc: "RetrievalService | None" = None,
     ) -> None:
         self._llm = llm
         self._agent_config = agent_config
         self._model_name = getattr(llm, "model_name", "") or getattr(llm, "model", "")
         self._thinking = thinking
+        self._retrieval_svc = retrieval_svc
 
     async def stream(self, ctx: StepContext) -> AsyncIterator[ChatEvent]:
         """Stream ChatEvents from the agent's graph with automatic tracing."""
@@ -99,11 +102,13 @@ class ReactStep(BaseStep):
         # Build graph via registry — builder applies thinking internally per its own logic
         agent_type = getattr(self._agent_config, "agent_type", "chat") or "chat"
         builder = get_graph_builder(agent_type)
+        services = {"retrieval": self._retrieval_svc} if self._retrieval_svc is not None else None
         graph = builder.build(
             llm=self._llm,
             tools=tools,
             agent_config=self._agent_config,
             thinking=self._thinking,
+            services=services,
         )
 
         # Initial messages
