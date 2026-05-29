@@ -227,3 +227,31 @@ class TestPdfConverterWarnings:
 
         combined = " ".join(result.warnings)
         assert "5" in combined  # "Hello" has 5 chars
+
+
+class TestPdfConverterWithSampleFixture:
+    """Tests using the actual sample.pdf fixture (F-012)."""
+
+    async def test_sample_pdf_converts_successfully(self):
+        from baize.knowledge.ingestion.converters import pdf
+        from tests.knowledge.fixtures.conftest import sample_pdf_bytes
+
+        result = await pdf.convert(sample_pdf_bytes())
+        assert isinstance(result.markdown, str)
+        assert len(result.markdown.strip()) > 0
+
+    async def test_sample_pdf_no_outline_returns_plain_text(self):
+        from baize.knowledge.ingestion.converters import pdf
+        from tests.knowledge.fixtures.conftest import sample_pdf_bytes
+
+        result = await pdf.convert(sample_pdf_bytes())
+        for line in result.markdown.split("\n"):
+            assert not line.startswith("#"), f"Unexpected heading in plain-text PDF: {line!r}"
+
+    async def test_sample_pdf_no_outline_warning_present(self):
+        from baize.knowledge.ingestion.converters import pdf
+        from tests.knowledge.fixtures.conftest import sample_pdf_bytes
+
+        result = await pdf.convert(sample_pdf_bytes())
+        combined = " ".join(result.warnings)
+        assert "无 outline" in combined or "无outline" in combined
