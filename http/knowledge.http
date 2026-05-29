@@ -1,0 +1,192 @@
+### ============================================================
+### Knowledge Base API 完整流程测试
+### 执行顺序：创建 KB → JSON 创建文档 → 上传文件 → 列出文档 → 搜索 → 删除文档 → 删除 KB
+### ============================================================
+
+@host = http://localhost:8000
+@apiKey = bz-_ipAHus6VVAl-K71UKzu50FU4CoYt8kWRGRm_0U3Xcg
+
+# ── Step 1：先登录取 JWT（或直接用 apiKey）──
+### 登录获取 JWT
+POST {{host}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "login": "admin",
+  "password": "baize@2026"
+}
+
+> {%
+client.global.set("jwt", response.body.access_token);
+%}
+
+###
+
+# ── Step 2：创建知识库 ──
+### 创建知识库（embedding_provider=zhipu）
+POST {{host}}/api/v1/knowledge-bases
+Authorization: Bearer {{jwt}}
+Content-Type: application/json
+
+{
+  "name": "AI 学习笔记",
+  "description": "收录 AI 技术相关 Markdown 笔记",
+  "embedding_provider": "zhipu",
+  "embedding_model": "embedding-3",
+  "embedding_dim": 2048
+}
+
+> {%
+client.global.set("kbId", response.body.id);
+%}
+
+###
+
+# ── Step 3：查看知识库列表 ──
+### 列出所有知识库（默认 status=active）
+GET {{host}}/api/v1/knowledge-bases?status=active&limit=20&offset=0
+Authorization: Bearer {{jwt}}
+
+###
+
+# ── Step 4：获取单个知识库 ──
+### 获取知识库详情
+GET {{host}}/api/v1/knowledge-bases/{{kbId}}
+Authorization: Bearer {{jwt}}
+
+###
+
+# ── Step 5：通过 JSON body 创建文档（含 h1/h2/h3 标题层级）──
+### JSON 方式创建 Markdown 文档
+POST {{host}}/api/v1/knowledge-bases/{{kbId}}/documents
+Authorization: Bearer {{jwt}}
+Content-Type: application/json
+
+{
+  "title": "向量数据库入门指南",
+  "source_type": "markdown",
+  "source_uri": "obsidian://vault/AI/向量数据库.md",
+  "content": "# 向量数据库入门指南\n\n向量数据库是专门用于存储和检索高维向量数据的数据库系统。\n\n## 核心概念\n\n### 嵌入（Embedding）\n\n嵌入是将文本、图像等非结构化数据转化为高维数值向量的过程。通过 Embedding 模型，语义相近的内容会被映射到向量空间中相邻的位置。\n\n### 相似度搜索\n\n向量数据库通过计算向量间的距离（余弦相似度、欧氏距离等）实现语义级别的近似最近邻（ANN）搜索。\n\n## 主流产品对比\n\n| 产品 | 特点 | 适用场景 |\n|------|------|----------|\n| Qdrant | 高性能、Rust 编写 | RAG、推荐系统 |\n| Milvus | 云原生、大规模 | 企业级搜索 |\n| Chroma | 轻量、易嵌入 | 原型开发 |\n\n## 与 RAG 的结合\n\n### 检索增强生成\n\n检索增强生成（RAG）结合了知识库检索与大语言模型生成能力，先从向量数据库检索相关片段，再交给 LLM 综合作答。\n\n### 混合检索策略\n\n现代 RAG 系统通常采用 BM25 关键词检索 + 语义向量检索的混合方式，通过倒排融合（RRF）排序提升召回质量。\n",
+  "doc_metadata": {
+    "tags": ["向量数据库", "RAG", "AI"],
+    "source": "personal-notes"
+  }
+}
+
+> {%
+client.global.set("docId", response.body.id);
+%}
+
+###
+
+# ── Step 6：通过 multipart 上传 .md 文件 ──
+### multipart 方式上传 Markdown 文件
+POST {{host}}/api/v1/knowledge-bases/{{kbId}}/documents/upload
+Authorization: Bearer {{jwt}}
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="langchain_notes.md"
+Content-Type: text/plain
+
+# LangChain 使用笔记
+
+LangChain 是构建 LLM 应用的主流框架。
+
+## 核心组件
+
+### Chain
+
+Chain 是 LangChain 的基本抽象，将多个组件串联成处理流水线。
+
+### Agent
+
+Agent 使用 LLM 动态决策调用哪些工具，是构建自主 AI 助理的关键。
+
+### Memory
+
+Memory 组件为 Agent 提供上下文记忆能力，支持短期对话历史和长期语义记忆。
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="title"
+
+LangChain 使用笔记
+------WebKitFormBoundary
+Content-Disposition: form-data; name="source_uri"
+
+obsidian://vault/AI/LangChain.md
+------WebKitFormBoundary--
+
+> {%
+client.global.set("uploadedDocId", response.body.id);
+%}
+
+###
+
+# ── Step 7：列出文档（过滤 status=ingested）──
+### 列出知识库中已入库的文档
+GET {{host}}/api/v1/knowledge-bases/{{kbId}}/documents?status=ingested&limit=20&offset=0
+Authorization: Bearer {{jwt}}
+
+###
+
+# ── Step 8：列出文档（全部状态）──
+### 列出知识库中所有文档（不过滤 status）
+GET {{host}}/api/v1/knowledge-bases/{{kbId}}/documents
+Authorization: Bearer {{jwt}}
+
+###
+
+# ── Step 9：获取单个文档 ──
+### 获取 JSON 创建的文档详情
+GET {{host}}/api/v1/knowledge-bases/{{kbId}}/documents/{{docId}}
+Authorization: Bearer {{jwt}}
+
+###
+
+# ── Step 10：搜索知识库 ──
+### 搜索知识库（混合检索）
+POST {{host}}/api/v1/knowledge-bases/{{kbId}}/search
+Authorization: Bearer {{jwt}}
+Content-Type: application/json
+
+{
+  "query": "向量数据库如何与 RAG 结合使用？",
+  "top_k": 5,
+  "include_parents": true
+}
+
+###
+
+# ── Step 11：搜索知识库（精确关键词）──
+### 搜索知识库（关键词检索）
+POST {{host}}/api/v1/knowledge-bases/{{kbId}}/search
+Authorization: Bearer {{jwt}}
+Content-Type: application/json
+
+{
+  "query": "BM25 倒排融合 RRF",
+  "top_k": 3,
+  "include_parents": false
+}
+
+###
+
+# ── Step 12：清理 — 删除 JSON 创建的文档 ──
+### 删除通过 JSON 创建的文档（硬删除，含 Qdrant chunks）
+DELETE {{host}}/api/v1/knowledge-bases/{{kbId}}/documents/{{docId}}
+Authorization: Bearer {{jwt}}
+
+###
+
+# ── Step 13：清理 — 删除上传的文档 ──
+### 删除通过文件上传创建的文档
+DELETE {{host}}/api/v1/knowledge-bases/{{kbId}}/documents/{{uploadedDocId}}
+Authorization: Bearer {{jwt}}
+
+###
+
+# ── Step 14：清理 — 软删除知识库 ──
+### 软删除知识库（status 改为 deleted，数据保留）
+DELETE {{host}}/api/v1/knowledge-bases/{{kbId}}
+Authorization: Bearer {{jwt}}
