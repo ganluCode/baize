@@ -37,6 +37,8 @@ class FieldDescriptor(BaseModel):
         options: Pre-resolved selectable options (always populated for select types).
         options_ref: Semantic hint that options are dynamic (e.g. ``"llm_models_chat"``).
             Frontend may show a refresh button for such fields.
+        options_source: API endpoint URL for dynamically loading options at runtime
+            (e.g. ``"/api/v1/knowledge-bases"``).
     """
 
     key: str
@@ -48,6 +50,7 @@ class FieldDescriptor(BaseModel):
     constraints: dict[str, Any] | None = None
     options: list[FieldOption] | None = None
     options_ref: str | None = None
+    options_source: str | None = None
 
 
 class FieldGroup(BaseModel):
@@ -57,6 +60,7 @@ class FieldGroup(BaseModel):
     label: str
     sort: int = 0
     fields: list[FieldDescriptor]
+    visible_when: dict[str, Any] | None = None
 
 
 class ResourceMetadata(BaseModel):

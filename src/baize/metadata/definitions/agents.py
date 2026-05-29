@@ -45,7 +45,7 @@ async def build_agents_metadata(ctx: ResolverContext) -> ResourceMetadata:
                         default="chat",
                         options=[
                             FieldOption(value="chat", label="对话"),
-                            FieldOption(value="rag", label="知识检索（计划中）", disabled=True),
+                            FieldOption(value="knowledge", label="知识检索"),
                             FieldOption(value="workflow", label="工作流（计划中）", disabled=True),
                         ],
                     ),
@@ -178,9 +178,39 @@ async def build_agents_metadata(ctx: ResolverContext) -> ResourceMetadata:
                 ],
             ),
             FieldGroup(
+                key="knowledge_config",
+                label="知识检索配置",
+                sort=6,
+                visible_when={"agent_type": "knowledge"},
+                fields=[
+                    FieldDescriptor(
+                        key="knowledge_config.default_kb_id",
+                        label="默认知识库",
+                        description="知识检索时使用的知识库",
+                        type="select",
+                        options_source="/api/v1/knowledge-bases",
+                    ),
+                    FieldDescriptor(
+                        key="knowledge_config.top_k",
+                        label="召回数量",
+                        description="单次检索返回的最大 chunk 数",
+                        type="int",
+                        default=8,
+                        constraints={"min": 1, "max": 50},
+                    ),
+                    FieldDescriptor(
+                        key="knowledge_config.include_parents",
+                        label="包含父节点",
+                        description="是否同时返回 chunk 的父级段落以提供更多上下文",
+                        type="bool",
+                        default=True,
+                    ),
+                ],
+            ),
+            FieldGroup(
                 key="guardrails",
                 label="执行护栏",
-                sort=6,
+                sort=7,
                 fields=[
                     FieldDescriptor(
                         key="guardrails.max_tool_calls",
