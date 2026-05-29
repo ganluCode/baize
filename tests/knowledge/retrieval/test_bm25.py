@@ -198,3 +198,71 @@ async def test_score_equals_bm25_score():
 
     assert result[0].score == pytest.approx(0.75)
     assert result[0].bm25_score == pytest.approx(0.75)
+
+
+# ── 3条fixture，2条命中，1条不含关键词（SQL WHERE过滤后只返回2条）──
+
+
+async def test_three_fixture_chunks_two_match_ordered_by_ts_rank():
+    """DB simulates 3 chunks but SQL WHERE filters out 1 non-matching chunk.
+
+    The mock returns the 2 matching rows already sorted by ts_rank DESC,
+    verifying that search returns exactly 2 results in correct rank order.
+    """
+    kb_id = uuid.uuid4()
+    matching_high = _make_row(uuid.uuid4(), uuid.uuid4(), kb_id, "python async programming", bm25_score=0.9)
+    matching_low = _make_row(uuid.uuid4(), uuid.uuid4(), kb_id, "python web framework", bm25_score=0.6)
+    # Third chunk does not contain keyword — SQL WHERE excludes it; mock returns only 2 rows
+    session = _make_session([matching_high, matching_low])
+    retriever = BM25Retriever(db_session=session)
+
+    result = await retriever.search(kb_id=kb_id, query="python", limit=10)
+
+    assert len(result) == 2
+    assert result[0].bm25_score == pytest.approx(0.9)
+    assert result[1].bm25_score == pytest.approx(0.6)
+    assert result[0].rank == 1
+    assert result[1].rank == 2
+
+
+# ── 特殊字符：单引号和分号 ──
+
+
+async def test_query_with_single_quote_returns_results_no_sql_error():
+    """Single quote in query must not raise any exception (parameterized query prevents injection)."""
+    kb_id = uuid.uuid4()
+    rows = [_make_row(uuid.uuid4(), uuid.uuid4(), kb_id, "it's a match", bm25_score=0.5)]
+    session = _make_session(rows)
+    retriever = BM25Retriever(db_session=session)
+
+    result = await retriever.search(kb_id=kb_id, query="it's", limit=10)
+
+    assert len(result) == 1
+    assert result[0].bm25_score == pytest.approx(0.5)
+
+
+async def test_query_with_semicolon_returns_results_no_sql_error():
+    """Semicolon in query must not raise any exception (parameterized query prevents injection)."""
+    kb_id = uuid.uuid4()
+    rows = [_make_row(uuid.uuid4(), uuid.uuid4(), kb_id, "version 1.0; stable", bm25_score=0.4)]
+    session = _make_session(rows)
+    retriever = BM25Retriever(db_session=session)
+
+    result = await retriever.search(kb_id=kb_id, query="version; DROP TABLE knowledge_chunks", limit=10)
+
+    assert len(result) == 1
+    assert result[0].bm25_score == pytest.approx(0.4)
+
+
+async def test_query_with_both_special_chars_no_exception():
+    """Query containing both single quote and semicolon must not raise exception."""
+    session = _make_session([])
+    retriever = BM25Retriever(db_session=session)
+
+    # Must not raise any exception despite dangerous-looking input
+    result = await retriever.search(
+        kb_id=uuid.uuid4(),
+        query="test'; DROP TABLE knowledge_chunks; --",
+        limit=10,
+    )
+    assert result == []
