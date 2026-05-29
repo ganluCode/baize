@@ -15,6 +15,7 @@ from baize.core.container import Container
 from baize.core.deps import set_container
 from baize.core.exceptions import register_exception_handlers
 from baize.core.logging import setup_logging
+from baize.knowledge.api import router as knowledge_router
 from baize.llm.router import router as llm_router
 from baize.metadata.router import router as metadata_router
 from baize.openai_compat.router_completions import router as completions_router
@@ -57,6 +58,7 @@ app = FastAPI(
         {"name": "users"},
         {"name": "metadata"},
         {"name": "openai-compat"},
+        {"name": "knowledge"},
     ],
     lifespan=lifespan,
 )
@@ -81,6 +83,7 @@ app.include_router(session_router, prefix="/api/v1")
 app.include_router(session_detail_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
 app.include_router(metadata_router, prefix="/api/v1")
+app.include_router(knowledge_router, prefix="/api/v1/knowledge-bases")
 
 # OpenAI-compatible endpoints (mounted at /v1, not /api/v1)
 app.include_router(models_router, prefix="/v1")
