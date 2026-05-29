@@ -11,18 +11,21 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi import status as http_status
 from pypdf import PdfReader
-from sqlalchemy import select
+from qdrant_client.models import PointIdsList
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.core.database import get_db
 from baize.core.deps import get_provider_factory
 from baize.knowledge.deps import get_knowledge_base_service
-from baize.knowledge.models import KnowledgeDocumentModel
+from baize.knowledge.ingestion.qdrant_client import get_qdrant_client
+from baize.knowledge.models import KnowledgeChunkModel, KnowledgeDocumentModel
 from baize.knowledge.schemas import (
     KnowledgeBaseCreateRequest,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
     KnowledgeDocumentCreateRequest,
+    KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
 )
 from baize.knowledge.service import KnowledgeBaseService, KnowledgeBaseServiceError
@@ -401,6 +404,168 @@ async def upload_document(
     )
 
     return KnowledgeDocumentResponse.model_validate(doc)
+
+
+@router.get("/{kb_id}/documents", response_model=KnowledgeDocumentListResponse)
+async def list_documents(
+    kb_id: uuid.UUID,
+    doc_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: UserModel = Depends(get_current_user),
+    svc: KnowledgeBaseService = Depends(get_knowledge_base_service),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeDocumentListResponse:
+    """List documents in a knowledge base with optional status filter.
+
+    Returns:
+        200 + KnowledgeDocumentListResponse with items and total.
+
+    Raises:
+        HTTPException: 403 if KB belongs to another user.
+        HTTPException: 404 if KB not found or deleted.
+    """
+    logger.info(
+        "GET /knowledge-bases/%s/documents user_id=%s status=%s",
+        kb_id,
+        current_user.id,
+        doc_status,
+    )
+    try:
+        await svc.get(kb_id=kb_id, user_id=current_user.id)
+    except KnowledgeBaseServiceError as exc:
+        raise _service_error_to_http(exc) from exc
+
+    base_where = [KnowledgeDocumentModel.kb_id == kb_id]
+    if doc_status is not None:
+        base_where.append(KnowledgeDocumentModel.status == doc_status)
+
+    count_result = await db.execute(
+        select(func.count()).select_from(KnowledgeDocumentModel).where(*base_where)
+    )
+    total: int = count_result.scalar_one()
+
+    items_result = await db.execute(
+        select(KnowledgeDocumentModel)
+        .where(*base_where)
+        .order_by(KnowledgeDocumentModel.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    items = items_result.scalars().all()
+
+    return KnowledgeDocumentListResponse(
+        items=[KnowledgeDocumentResponse.model_validate(doc) for doc in items],
+        total=total,
+    )
+
+
+@router.get("/{kb_id}/documents/{doc_id}", response_model=KnowledgeDocumentResponse)
+async def get_document(
+    kb_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    current_user: UserModel = Depends(get_current_user),
+    svc: KnowledgeBaseService = Depends(get_knowledge_base_service),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Return a single document belonging to the given knowledge base.
+
+    Returns:
+        200 + KnowledgeDocumentResponse.
+
+    Raises:
+        HTTPException: 403 if KB belongs to another user.
+        HTTPException: 404 if KB not found, deleted, or document not found/in wrong KB.
+    """
+    logger.info(
+        "GET /knowledge-bases/%s/documents/%s user_id=%s", kb_id, doc_id, current_user.id
+    )
+    try:
+        await svc.get(kb_id=kb_id, user_id=current_user.id)
+    except KnowledgeBaseServiceError as exc:
+        raise _service_error_to_http(exc) from exc
+
+    result = await db.execute(
+        select(KnowledgeDocumentModel).where(
+            KnowledgeDocumentModel.id == doc_id,
+            KnowledgeDocumentModel.kb_id == kb_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Document {doc_id} not found in knowledge base {kb_id}.",
+        )
+    return KnowledgeDocumentResponse.model_validate(doc)
+
+
+@router.delete("/{kb_id}/documents/{doc_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    kb_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    current_user: UserModel = Depends(get_current_user),
+    svc: KnowledgeBaseService = Depends(get_knowledge_base_service),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Hard-delete a document and all its chunks from Postgres and Qdrant.
+
+    Qdrant deletion failures are logged as warnings and do not block the
+    Postgres deletion.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        HTTPException: 403 if KB belongs to another user.
+        HTTPException: 404 if KB not found, deleted, or document not found/in wrong KB.
+    """
+    logger.info(
+        "DELETE /knowledge-bases/%s/documents/%s user_id=%s", kb_id, doc_id, current_user.id
+    )
+    try:
+        await svc.get(kb_id=kb_id, user_id=current_user.id)
+    except KnowledgeBaseServiceError as exc:
+        raise _service_error_to_http(exc) from exc
+
+    result = await db.execute(
+        select(KnowledgeDocumentModel).where(
+            KnowledgeDocumentModel.id == doc_id,
+            KnowledgeDocumentModel.kb_id == kb_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Document {doc_id} not found in knowledge base {kb_id}.",
+        )
+
+    chunks_result = await db.execute(
+        select(KnowledgeChunkModel).where(KnowledgeChunkModel.doc_id == doc_id)
+    )
+    chunks = chunks_result.scalars().all()
+
+    point_ids = [str(c.qdrant_point_id) for c in chunks if c.qdrant_point_id is not None]
+    if point_ids:
+        collection_name = f"baize_kb_{kb_id.hex}"
+        try:
+            qdrant = await get_qdrant_client()
+            await qdrant.delete(
+                collection_name=collection_name,
+                points_selector=PointIdsList(points=point_ids),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Qdrant delete failed for document %s in collection %s (continuing): %s",
+                doc_id,
+                collection_name,
+                exc,
+            )
+
+    await db.execute(delete(KnowledgeChunkModel).where(KnowledgeChunkModel.doc_id == doc_id))
+    await db.execute(delete(KnowledgeDocumentModel).where(KnowledgeDocumentModel.id == doc_id))
+    await db.commit()
 
 
 async def _bg_ingest_file(
