@@ -1,0 +1,219 @@
+"""IngestionService: orchestrates the document ingestion pipeline."""
+
+import hashlib
+import json
+import logging
+import uuid
+from typing import Any
+
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import PointStruct
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from baize.knowledge.ingestion.chunker import ChunkPlan, HierarchicalChunker
+from baize.knowledge.ingestion.embedder import KnowledgeEmbedder
+from baize.knowledge.ingestion.exceptions import DocumentAlreadyExistsError
+from baize.knowledge.ingestion.parser import MarkdownParser
+from baize.knowledge.ingestion.qdrant_client import VectorDimMismatchError, ensure_collection
+from baize.knowledge.models import KnowledgeBaseModel, KnowledgeChunkModel, KnowledgeDocumentModel
+
+logger = logging.getLogger(__name__)
+
+_EMBED_BATCH_SIZE = 32
+
+
+class IngestionService:
+    """Orchestrates the 10-step document ingestion pipeline.
+
+    Args:
+        session: SQLAlchemy async session for database operations.
+        embedder: KnowledgeEmbedder for generating vector embeddings.
+        qdrant: AsyncQdrantClient for vector database operations.
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        embedder: KnowledgeEmbedder,
+        qdrant: AsyncQdrantClient,
+    ) -> None:
+        self._session = session
+        self._embedder = embedder
+        self._qdrant = qdrant
+
+    async def ingest_markdown(
+        self,
+        *,
+        kb_id: uuid.UUID,
+        title: str,
+        content: str,
+        source_type: str = "markdown",
+        source_uri: str | None = None,
+        doc_metadata: dict[str, Any] | None = None,
+    ) -> uuid.UUID:
+        """Ingest markdown content into a knowledge base.
+
+        Returns:
+            The document ID.
+
+        Raises:
+            ValueError: KB not found or not active.
+            DocumentAlreadyExistsError: Same content already ingested in this KB.
+            VectorDimMismatchError: Embedding dimension does not match KB configuration.
+        """
+        # Step 1: Validate KB
+        kb = await self._session.get(KnowledgeBaseModel, kb_id)
+        if kb is None:
+            raise ValueError(f"Knowledge base {kb_id} not found")
+        if kb.status != "active":
+            raise ValueError(
+                f"Knowledge base {kb_id} is not active (status={kb.status})"
+            )
+
+        # Step 2: Content hash
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+        # Step 3: Duplicate check
+        result = await self._session.execute(
+            select(KnowledgeDocumentModel).where(
+                KnowledgeDocumentModel.kb_id == kb_id,
+                KnowledgeDocumentModel.content_hash == content_hash,
+                KnowledgeDocumentModel.status == "ingested",
+            )
+        )
+        if result.scalar_one_or_none() is not None:
+            raise DocumentAlreadyExistsError(
+                f"Document with content_hash={content_hash} already ingested in KB {kb_id}"
+            )
+
+        # Step 4: Create document record
+        doc_id = uuid.uuid4()
+        doc = KnowledgeDocumentModel(
+            id=doc_id,
+            kb_id=kb_id,
+            title=title,
+            source_type=source_type,
+            source_uri=source_uri,
+            content_hash=content_hash,
+            doc_metadata=doc_metadata if doc_metadata is not None else {},
+            status="processing",
+        )
+        self._session.add(doc)
+        await self._session.commit()
+
+        try:
+            # Step 5: Parse
+            parsed = MarkdownParser.parse(title, content)
+
+            # Step 6: Chunk
+            chunk_plans = HierarchicalChunker().chunk(parsed)
+
+            if not chunk_plans:
+                doc.status = "ingested"
+                doc.chunk_count = 0
+                await self._session.commit()
+                return doc_id
+
+            # Step 7: Batch embed
+            texts = [cp.content for cp in chunk_plans]
+            all_vectors: list[list[float]] = []
+            for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+                batch = texts[i : i + _EMBED_BATCH_SIZE]
+                vectors = await self._embedder.embed_documents(batch)
+                all_vectors.extend(vectors)
+
+            # Step 8: Validate dimensions
+            if all_vectors and len(all_vectors[0]) != kb.embedding_dim:
+                raise VectorDimMismatchError(
+                    f"Embedder returned dim={len(all_vectors[0])}, "
+                    f"KB expects dim={kb.embedding_dim}"
+                )
+
+            # Step 9: Postgres transaction — insert all chunks with local_id→db_id mapping
+            local_to_db: dict[str, uuid.UUID] = {}
+            chunk_models: list[KnowledgeChunkModel] = []
+            for cp in chunk_plans:
+                chunk_uuid = uuid.uuid4()
+                parent_db_id = (
+                    local_to_db.get(cp.parent_local_id)
+                    if cp.parent_local_id
+                    else None
+                )
+                chunk = KnowledgeChunkModel(
+                    id=chunk_uuid,
+                    kb_id=kb_id,
+                    doc_id=doc_id,
+                    parent_chunk_id=parent_db_id,
+                    level=cp.level,
+                    section_path=(
+                        json.dumps(cp.section_path, ensure_ascii=False)
+                        if cp.section_path
+                        else None
+                    ),
+                    content=cp.content,
+                )
+                self._session.add(chunk)
+                local_to_db[cp.local_id] = chunk_uuid
+                chunk_models.append(chunk)
+            await self._session.flush()
+            await self._session.commit()
+
+            # Step 10: Qdrant upsert
+            collection_name = f"baize_kb_{kb_id.hex}"
+            await ensure_collection(
+                collection_name, kb.embedding_dim, client=self._qdrant
+            )
+
+            point_id_map: dict[uuid.UUID, uuid.UUID] = {}
+            points: list[PointStruct] = []
+            for cp, chunk_model, vector in zip(chunk_plans, chunk_models, all_vectors):
+                point_id = uuid.uuid4()
+                point_id_map[chunk_model.id] = point_id
+                points.append(
+                    PointStruct(
+                        id=str(point_id),
+                        vector=vector,
+                        payload={
+                            "chunk_id": str(chunk_model.id),
+                            "doc_id": str(doc_id),
+                            "kb_id": str(kb_id),
+                            "content": cp.content,
+                            "level": cp.level,
+                            "section_path": cp.section_path,
+                        },
+                    )
+                )
+
+            await self._qdrant.upsert(
+                collection_name=collection_name, points=points
+            )
+
+            # Step 11: Backfill qdrant_point_id
+            for chunk_model in chunk_models:
+                chunk_model.qdrant_point_id = point_id_map[chunk_model.id]
+
+            # Step 12: Mark complete
+            doc.status = "ingested"
+            doc.chunk_count = len(chunk_models)
+            await self._session.commit()
+
+            return doc_id
+
+        except Exception as exc:
+            await self._session.rollback()
+            try:
+                await self._session.execute(
+                    update(KnowledgeDocumentModel)
+                    .where(KnowledgeDocumentModel.id == doc_id)
+                    .values(
+                        status="failed",
+                        error_message=str(exc)[:2000],
+                    )
+                )
+                await self._session.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to mark document %s as failed", doc_id
+                )
+            raise
