@@ -13,6 +13,7 @@ Usage::
 
 # Import each graph module to trigger @register_graph side-effects.
 from baize.agent.graphs import chat_react  # noqa: F401
+from baize.agent.graphs import knowledge_react  # noqa: F401
 from baize.agent.graphs.base import GraphBuilder, get_graph_builder, list_agent_types, register_graph
 from baize.agent.graphs.state import AgentState
 
