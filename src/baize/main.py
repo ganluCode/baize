@@ -83,7 +83,7 @@ app.include_router(session_router, prefix="/api/v1")
 app.include_router(session_detail_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
 app.include_router(metadata_router, prefix="/api/v1")
-app.include_router(knowledge_router, prefix="/api/v1/knowledge-bases")
+app.include_router(knowledge_router, prefix="/api/v1/knowledge-bases", tags=["knowledge"])
 
 # OpenAI-compatible endpoints (mounted at /v1, not /api/v1)
 app.include_router(models_router, prefix="/v1")
