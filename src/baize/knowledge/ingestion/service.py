@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from baize.knowledge.ingestion.chunker import ChunkPlan, HierarchicalChunker
+from baize.knowledge.ingestion.converters import convert_to_markdown
 from baize.knowledge.ingestion.embedder import KnowledgeEmbedder
 from baize.knowledge.ingestion.exceptions import DocumentAlreadyExistsError
 from baize.knowledge.ingestion.parser import MarkdownParser
@@ -217,3 +218,44 @@ class IngestionService:
                     "Failed to mark document %s as failed", doc_id
                 )
             raise
+
+    async def ingest_file(
+        self,
+        *,
+        kb_id: uuid.UUID,
+        title: str,
+        raw_bytes: bytes,
+        source_type: str,
+        source_uri: str | None = None,
+        doc_metadata: dict[str, Any] | None = None,
+    ) -> uuid.UUID:
+        """Convert raw bytes to Markdown and ingest into a knowledge base.
+
+        Calls convert_to_markdown to convert the raw bytes, then delegates to
+        ingest_markdown for the full ingestion pipeline. Converter warnings are
+        stored in doc_metadata["converter_warnings"].
+
+        Returns:
+            The document ID.
+
+        Raises:
+            UnsupportedFormatError: If source_type is not supported.
+            DocumentDecodeError: If the document cannot be decoded (e.g. encrypted PDF).
+            ScannedPdfError: If the PDF has no extractable text.
+            ValueError: KB not found or not active.
+            DocumentAlreadyExistsError: Same content already ingested in this KB.
+            VectorDimMismatchError: Embedding dimension does not match KB configuration.
+        """
+        converted = await convert_to_markdown(source_type=source_type, raw_bytes=raw_bytes)
+
+        meta = dict(doc_metadata) if doc_metadata else {}
+        meta["converter_warnings"] = converted.warnings
+
+        return await self.ingest_markdown(
+            kb_id=kb_id,
+            title=title,
+            content=converted.markdown,
+            source_type=source_type,
+            source_uri=source_uri,
+            doc_metadata=meta,
+        )
